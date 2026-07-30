@@ -1,0 +1,34 @@
+{
+  "name": "mini-oyun",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "server:dist": "node server/index.js --serve-dist",
+    "check:scenes": "node tools/scene-check.mjs",
+    "test:server": "node tools/server-test.mjs",
+    "test:coop": "node tools/coop-test.mjs",
+    "test:net": "node tools/net-sim-test.mjs",
+    "test:integration": "node tools/coop-integration-test.mjs",
+    "test:render": "node tools/render-test.mjs",
+    "test": "npm run check:scenes && npm run test:server && npm run test:coop && npm run test:net && npm run test:render && npm run test:integration && npm run test:live",
+    "shots": "node tools/scene-shots.mjs",
+    "perf": "node tools/scene-perf.mjs",
+    "measure:dragon": "node tools/measure-dragon.mjs",
+    "test:live": "node tools/live-coop-test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.2",
+    "vite": "^8.1.1"
+  }
+}

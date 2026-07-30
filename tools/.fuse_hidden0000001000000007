@@ -1,0 +1,330 @@
+/* ==========================================================================
+   Co-op Entegrasyon Testi — GERÇEK ZİNCİR
+
+       npm run test:integration
+
+   Neden bu test var: elimizdeki diğer testler parçaları ayrı ayrı doğruluyordu.
+   `test:net` anlık görüntüleri ELLE taşıyor, `CoopSession` sınıfına hiç
+   dokunmuyor. `test:server` soketleri doğruluyor ama motoru tanımıyor.
+   Aradaki bağlantı katmanı — yani gerçekte kullanılan yol — test edilmemişti
+   ve hata tam oradaydı.
+
+   Bu test gerçek zinciri kurar:
+
+       Motor(host) ─ CoopSession(host) ─ sahte taşıma ─ CoopSession(misafir) ─ Motor(misafir)
+
+   Sahte taşıma sunucunun aktarım davranışını taklit eder (mesaj karşı tarafa
+   gider, gönderene geri dönmez) ve gerçek gecikme uygular. Zamanlayıcılar
+   GERÇEK: CoopSession setInterval kullanıyor, testte de öyle çalışıyor.
+   ========================================================================== */
+
+/* ---------- DOM taklidi ---------- */
+function fakeCtx() {
+  const noop = () => {}; const grad = { addColorStop: noop };
+  const c = {
+    canvas: { width: 800, height: 500 },
+    createLinearGradient: () => grad, createRadialGradient: () => grad,
+    createPattern: () => null, measureText: () => ({ width: 10 }),
+    getImageData: () => ({ data: new Uint8ClampedArray(4) }), putImageData: noop
+  };
+  for (const m of ['save','restore','beginPath','closePath','fill','stroke','clip','translate','scale','rotate',
+    'setTransform','transform','resetTransform','moveTo','lineTo','quadraticCurveTo','bezierCurveTo','arc','arcTo',
+    'ellipse','rect','roundRect','fillRect','strokeRect','clearRect','drawImage','fillText','strokeText','setLineDash']) c[m] = noop;
+  return c;
+}
+globalThis.window = {
+  devicePixelRatio: 1, addEventListener: () => {}, removeEventListener: () => {},
+  requestAnimationFrame: () => 0, cancelAnimationFrame: () => {}
+};
+globalThis.document = { createElement: () => ({ id: '', style: {}, width: 800, height: 500, getContext: () => fakeCtx() }) };
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+globalThis.sessionStorage = {
+  _d: {}, getItem(k) { return this._d[k] ?? null; },
+  setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; }
+};
+
+const container = () => ({ appendChild: () => {}, getBoundingClientRect: () => ({ width: 800, height: 500, x: 0, y: 0 }) });
+
+const { GameEngine } = await import('../src/game/engine.js');
+const { CoopSession } = await import('../src/net/session.js');
+const { MSG } = await import('../server/protocol.js');
+
+/* ---------- Test iskeleti ---------- */
+const results = [];
+let failures = 0;
+function check(name, cond, detail = '') {
+  results.push({ test: name, sonuç: cond ? '✔' : '✘', not: cond ? '' : String(detail).slice(0, 56) });
+  if (!cond) failures++;
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/* --------------------------------------------------------------------------
+   Sahte taşıma — sunucunun aktarım davranışı
+
+   Sunucu ne yapıyorsa o: mesajı KARŞI tarafa iletir, gönderene geri döndürmez.
+   NetClient'ın CoopSession tarafından kullanılan yüzeyini taklit eder.
+   -------------------------------------------------------------------------- */
+class FakeNet {
+  constructor(role, latency = 40) {
+    this.role = role;
+    this.isHost = role === 'host';
+    this.isGuest = role === 'guest';
+    this.status = 'online';
+    this.rtt = latency * 2;
+    this.peer = null;
+    this.latency = latency;
+    this.handlers = new Map();
+    this.sentCount = 0;
+    this.sentByType = {};
+  }
+
+  on(type, fn) {
+    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
+    this.handlers.get(type).add(fn);
+    return () => this.handlers.get(type)?.delete(fn);
+  }
+
+  send(type, payload = {}) {
+    this.sentCount++;
+    this.sentByType[type] = (this.sentByType[type] || 0) + 1;
+    if (!this.peer) return false;
+    /* Sunucu gibi: JSON'a çevirip geri açıyoruz ki serileştirilemeyen
+       bir şey kaçarsa test yakalasın. */
+    let wire;
+    try { wire = JSON.parse(JSON.stringify({ t: type, ...payload, from: this.role })); }
+    catch (e) { throw new Error(`${type} serileştirilemedi: ${e.message}`); }
+    setTimeout(() => this.peer._deliver(type, wire), this.latency);
+    return true;
+  }
+
+  _deliver(type, msg) {
+    for (const fn of (this.handlers.get(type) || [])) fn(msg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Gerçek oyun kurulumu — main.js + gameView.js ne yapıyorsa aynısı
+   -------------------------------------------------------------------------- */
+function buildSide(role, net, levelIndex = 0) {
+  const session = new CoopSession(net, {});
+  const engine = new GameEngine(container(), {
+    onHud: () => {}, onToast: () => {}, onStory: () => {}, onDeath: () => {},
+    onLevelComplete: () => {}, onGameComplete: () => {}, onBossStart: () => {}, onPause: () => {},
+    /* gameView bunu motorun kare döngüsünde çağırıyor */
+    onFrame: () => session.applyIncoming()
+  }, {
+    mode: 'net',
+    netMode: session.isHost ? 'host' : 'guest',
+    localIndex: session.localIndex,
+    names: ['Mehmet', 'Ayşe']
+  });
+  engine.lives = 3;
+  engine.loadLevel(levelIndex);
+  engine.entities.enemies.length = 0;          // ölçüm gürültüsünü kaldır
+  session.attachEngine(engine);
+  return { session, engine };
+}
+
+/** Motorun kare döngüsünü elle döndür (rAF yok) */
+function stepSide(side, dt) {
+  side.engine.cb.onFrame?.(dt);
+  side.engine._step(dt);
+}
+
+/* ==========================================================================
+   1. Misafir hareket edebiliyor mu — ASIL ŞİKÂYET
+   ========================================================================== */
+{
+  const hostNet = new FakeNet('host');
+  const guestNet = new FakeNet('guest');
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const host = buildSide('host', hostNet);
+  const guest = buildSide('guest', guestNet);
+
+  check('host 0. oyuncuyu, misafir 1. oyuncuyu kontrol ediyor',
+    host.session.localIndex === 0 && guest.session.localIndex === 1,
+    `host=${host.session.localIndex} misafir=${guest.session.localIndex}`);
+
+  check('misafirin klavyesi kendi karakterine bağlı',
+    guest.engine.inputs[1]?.constructor.name === 'Input' &&
+    guest.engine.inputs[0]?.constructor.name === 'RemoteInput',
+    `${guest.engine.inputs[0]?.constructor.name} / ${guest.engine.inputs[1]?.constructor.name}`);
+
+  check('host tarafında 1. oyuncu ağ girdisi bekliyor',
+    host.engine.inputs[1]?.constructor.name === 'RemoteInput',
+    host.engine.inputs[1]?.constructor.name);
+
+  /* Misafir sağa basıyor */
+  const gi = guest.engine.inputs[1];
+  gi.right = true;
+
+  const startHostX = host.engine.players[1].x;
+  const startGuestX = guest.engine.players[1].x;
+
+  /* 1.2 saniye gerçek zamanlı çalıştır — CoopSession'ın setInterval'ları
+     gerçekten dönsün. Motorları 60 fps'te elle adımlıyoruz. */
+  /* Karakter uçuruma düşüp başa dönebiliyor; ULAŞILAN EN UZAK NOKTAYI ölç. */
+  let maxHostX = startHostX, maxGuestX = startGuestX;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 1200) {
+    stepSide(host, 1 / 60);
+    stepSide(guest, 1 / 60);
+    maxHostX = Math.max(maxHostX, host.engine.players[1].x);
+    maxGuestX = Math.max(maxGuestX, guest.engine.players[1].x);
+    await sleep(4);
+  }
+  gi.right = false;
+
+  const hostMoved = maxHostX - startHostX;
+  const guestMoved = maxGuestX - startGuestX;
+
+  check('misafirin tuşları AĞA gidiyor',
+    (guestNet.sentByType[MSG.INPUT] || 0) > 10,
+    `${guestNet.sentByType[MSG.INPUT] || 0} input paketi`);
+
+  check('host misafirin girdisini ALIYOR',
+    host.engine.inputs[1].lastSeq > 0,
+    `lastSeq=${host.engine.inputs[1].lastSeq}`);
+
+  check('MİSAFİRİN KARAKTERİ HOST TARAFINDA HAREKET EDİYOR',
+    hostMoved > 60, `${hostMoved.toFixed(0)}px`);
+
+  check('MİSAFİRİN KARAKTERİ KENDİ EKRANINDA HAREKET EDİYOR',
+    guestMoved > 60, `${guestMoved.toFixed(0)}px`);
+
+  check('iki ekran birbirine yakın',
+    Math.abs(hostMoved - guestMoved) < 90,
+    `host=${hostMoved.toFixed(0)} misafir=${guestMoved.toFixed(0)}`);
+
+  /* Host da kendi karakterini oynatabilmeli */
+  const hi = host.engine.inputs[0];
+  hi.right = true;
+  const hostOwnStart = host.engine.players[0].x;
+  const guestSeesStart = guest.engine.players[0].x;
+  let maxOwn = hostOwnStart, maxSeen = guestSeesStart;
+  const t1 = Date.now();
+  while (Date.now() - t1 < 900) {
+    stepSide(host, 1 / 60);
+    stepSide(guest, 1 / 60);
+    maxOwn = Math.max(maxOwn, host.engine.players[0].x);
+    maxSeen = Math.max(maxSeen, guest.engine.players[0].x);
+    await sleep(4);
+  }
+  hi.right = false;
+
+  check('host kendi karakterini oynatabiliyor',
+    maxOwn - hostOwnStart > 60,
+    `${(maxOwn - hostOwnStart).toFixed(0)}px`);
+  check("host'un karakteri misafirin ekranında da hareket ediyor",
+    maxSeen - guestSeesStart > 40,
+    `${(maxSeen - guestSeesStart).toFixed(0)}px`);
+
+  check('anlık görüntüler misafire ulaşıyor',
+    guest.session.buffer.depth > 0 || guest.session.stats.received > 5,
+    `alınan=${guest.session.stats.received}`);
+
+  host.session.destroy(); guest.session.destroy();
+  host.engine.stop(); guest.engine.stop();
+}
+
+/* ==========================================================================
+   2. Ara sahne senkronu — gerçek Director + gerçek CoopSession
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'Mehmet', targetName: 'Ayşe', proposalText: 'Soru?' };
+
+  const hostNet = new FakeNet('host', 35);
+  const guestNet = new FakeNet('guest', 35);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const hostSession = new CoopSession(hostNet, {});
+  const guestSession = new CoopSession(guestNet, {});
+
+  const hostD = new Director(SCENES['intro'], { config });
+  const guestD = new Director(SCENES['intro'], { config });
+
+  hostSession.attachDirector(hostD);
+  guestSession.attachDirector(guestD);
+
+  /* Misafiri bilerek geride başlat — senkron onu yakalamalı */
+  guestD.seek(0);
+  hostD.seek(3.0);
+
+  const t0 = Date.now();
+  while (Date.now() - t0 < 1600) {
+    hostD.update(1 / 60);
+    guestD.update(1 / 60);
+    await sleep(6);
+  }
+
+  check('host sahne saatini yayınlıyor',
+    (hostNet.sentByType[MSG.SCENE] || 0) > 2,
+    `${hostNet.sentByType[MSG.SCENE] || 0} sahne paketi`);
+
+  check('MİSAFİRİN SAHNESİ HOST İLE SENKRON',
+    Math.abs(hostD.time - guestD.time) < 0.5,
+    `host=${hostD.time.toFixed(2)} misafir=${guestD.time.toFixed(2)}`);
+
+  hostSession.destroy(); guestSession.destroy();
+}
+
+/* ==========================================================================
+   3. Teklif seçimi — misafir seçiyor, host da devam ediyor
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'Mehmet', targetName: 'Ayşe', proposalText: 'Soru?' };
+
+  const hostNet = new FakeNet('host', 30);
+  const guestNet = new FakeNet('guest', 30);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const hostSession = new CoopSession(hostNet, {});
+  const guestSession = new CoopSession(guestNet, {});
+
+  let hostEnded = null;
+  const hostD = new Director(SCENES['outro-ask'], { config, onEnd: (i) => { hostEnded = i; } });
+  const guestD = new Director(SCENES['outro-ask'], { config, onChoice: (id) => guestSession.sendChoice(id) });
+
+  hostSession.attachDirector(hostD);
+  guestSession.attachDirector(guestD);
+  /* main.js'te host bu aboneliği kuruyor */
+  hostSession.onChoice((id) => hostD.submitChoice(id));
+
+  /* İkisini de seçim anına getir */
+  hostD.seek(SCENES['outro-ask'].choice.t - 0.1);
+  guestD.seek(SCENES['outro-ask'].choice.t - 0.1);
+  for (let i = 0; i < 20; i++) { hostD.update(1 / 60); guestD.update(1 / 60); }
+
+  check('host seçim anında bekliyor', hostD.awaitingChoice, `t=${hostD.time.toFixed(2)}`);
+  check('misafir seçim anında bekliyor', guestD.awaitingChoice, `t=${guestD.time.toFixed(2)}`);
+
+  guestD.submitChoice('yes');
+
+  const t0 = Date.now();
+  while (Date.now() - t0 < 800 && !hostEnded) {
+    hostD.update(1 / 60); guestD.update(1 / 60);
+    await sleep(6);
+  }
+
+  check('MİSAFİRİN CEVABI HOST\'A ULAŞTI VE SAHNE DEVAM ETTİ',
+    !!hostEnded, hostD.awaitingChoice ? 'host hâlâ bekliyor' : 'sahne bitmedi');
+  check('iki taraf da aynı cevabı biliyor',
+    hostD.choiceMade === 'yes' && guestD.choiceMade === 'yes',
+    `host=${hostD.choiceMade} misafir=${guestD.choiceMade}`);
+
+  hostSession.destroy(); guestSession.destroy();
+}
+
+/* ==========================================================================
+   Rapor
+   ========================================================================== */
+console.log('\n=== CO-OP ENTEGRASYON TESTİ ===');
+console.table(results);
+if (failures === 0) console.log(`\n✔ ${results.length} kontrolün tamamı geçti.\n`);
+else { console.log(`\n✘ ${failures}/${results.length} kontrol başarısız.\n`); process.exitCode = 1; }

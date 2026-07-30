@@ -1,0 +1,415 @@
+/* ==========================================================================
+   Netcode Simülasyonu — iki motor, yapay gecikme, ölçülen sapma
+
+       npm run test:net
+
+   İki GameEngine örneği açıyoruz: biri host, biri misafir. Aralarına
+   gerçekçi bir ağ koyuyoruz (gecikme + dalgalanma + paket kaybı) ve
+   misafirin ekranındaki dünyanın host'unkine ne kadar benzediğini ÖLÇÜYORUZ.
+
+   Bu testin cevapladığı soru şu: "misafir gerçekten aynı oyunu mu görüyor,
+   yoksa kendi kafasına göre bir şey mi oynuyor?"
+
+   Ölçülenler:
+     · yoldaş karakterin konum sapması (px)      → hedef: < 12 px ortalama
+     · kendi karakterinin sapması (prediction)    → hedef: < 25 px ortalama
+     · düşman konumlarının sapması                → hedef: < 12 px
+     · co-op kapı durumlarının tutarlılığı        → hedef: birebir
+     · paket boyutu                               → hedef: < 4 KB
+     · %5 paket kaybında bozulma olmaması
+   ========================================================================== */
+
+/* ---------- DOM taklidi ---------- */
+function fakeCtx() {
+  const noop = () => {}; const grad = { addColorStop: noop };
+  const c = { canvas: { width: 800, height: 500 }, createLinearGradient: () => grad,
+    createRadialGradient: () => grad, createPattern: () => null,
+    measureText: () => ({ width: 10 }), getImageData: () => ({ data: new Uint8ClampedArray(4) }), putImageData: noop };
+  for (const m of ['save','restore','beginPath','closePath','fill','stroke','clip','translate','scale','rotate',
+    'setTransform','transform','resetTransform','moveTo','lineTo','quadraticCurveTo','bezierCurveTo','arc','arcTo',
+    'ellipse','rect','roundRect','fillRect','strokeRect','clearRect','drawImage','fillText','strokeText','setLineDash']) c[m] = noop;
+  return c;
+}
+globalThis.window = { devicePixelRatio: 1, addEventListener: () => {}, removeEventListener: () => {},
+  requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} };
+globalThis.document = { createElement: () => ({ id: '', style: {}, width: 800, height: 500, getContext: () => fakeCtx() }) };
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+
+const container = () => ({ appendChild: () => {}, getBoundingClientRect: () => ({ width: 800, height: 500, x: 0, y: 0 }) });
+
+const { GameEngine } = await import('../src/game/engine.js');
+const { serializeSnapshot, applySnapshot, reconcileLocal, SnapshotBuffer } = await import('../src/net/snapshot.js');
+const { packInput, unpackInput } = await import('../server/protocol.js');
+
+/* ---------- Test iskeleti ---------- */
+const results = [];
+let failures = 0;
+function check(name, cond, detail = '') {
+  results.push({ test: name, sonuç: cond ? '✔' : '✘', not: cond ? '' : String(detail).slice(0, 52) });
+  if (!cond) failures++;
+}
+
+const DT = 1 / 60;
+
+/* --------------------------------------------------------------------------
+   Yapay ağ
+
+   Gerçek dünyada paketler gecikir, gecikme dalgalanır ve bazıları kaybolur.
+   Bunları taklit etmezsek test "mükemmel ağ"da geçer ve sahada patlar.
+   -------------------------------------------------------------------------- */
+class FakeNetwork {
+  constructor({ latency = 60, jitter = 25, loss = 0 } = {}) {
+    this.latency = latency; this.jitter = jitter; this.loss = loss;
+    this.queue = [];
+    this.now = 0;
+    this.dropped = 0; this.delivered = 0; this.bytes = 0;
+    this._rnd = mulberry(12345);
+  }
+  send(payload) {
+    this.bytes += JSON.stringify(payload).length;
+    if (this._rnd() < this.loss) { this.dropped++; return; }
+    const delay = this.latency + (this._rnd() - 0.5) * 2 * this.jitter;
+    this.queue.push({ at: this.now + Math.max(1, delay), payload });
+  }
+  advance(ms) {
+    this.now += ms;
+    const out = [];
+    /* Sıra bozulması da gerçekçi: jitter yüzünden paketler karışık gelebilir */
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (this.queue[i].at <= this.now) { out.push(this.queue[i].payload); this.queue.splice(i, 1); }
+    }
+    this.delivered += out.length;
+    return out.reverse();
+  }
+}
+
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+function makeEngine(netMode, localIndex, levelIndex = 0, extraCb = {}) {
+  const eng = new GameEngine(container(), {
+    onHud: () => {}, onToast: () => {}, onStory: () => {}, onDeath: () => {},
+    onLevelComplete: () => {}, onGameComplete: () => {}, onBossStart: () => {}, onPause: () => {},
+    ...extraCb
+  }, { mode: 'net', netMode, localIndex });
+  eng.lives = 3;
+  eng.loadLevel(levelIndex);
+  return eng;
+}
+
+/* --------------------------------------------------------------------------
+   Ana simülasyon
+   -------------------------------------------------------------------------- */
+
+function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false }) {
+  const host = makeEngine('host', 0, levelIndex);
+
+  /* Misafirin girdisi motorun SABİT ADIMINDAN yollanıyor — oyunda da
+     (gameView → CoopSession.sendInputTick) tam olarak böyle. Testin ayrı
+     bir zamanlayıcı kullanması, ölçtüğü şeyin gerçek yol olmaması demekti. */
+  let seq = 0;
+  const pending = [];
+  const lastPresses = { jump: 0, attack: 0, shoot: 0 };
+  const lastBits = [];
+  let upLinkRef = null;
+
+  const guest = makeEngine('guest', 1, levelIndex, {
+    onInputTick: (inp) => {
+      if (!upLinkRef) return;
+      const pr = inp.presses || { jump: 0, attack: 0, shoot: 0 };
+      const state = {
+        left: inp.left, right: inp.right, down: inp.down,
+        jumpHeld: inp.jumpHeld, attackHeld: inp.attackHeld,
+        shootHeld: inp.shootHeld, blockHeld: inp.blockHeld,
+        jumpEdge:   pr.jump   > lastPresses.jump,
+        attackEdge: pr.attack > lastPresses.attack,
+        shootEdge:  pr.shoot  > lastPresses.shoot
+      };
+      lastPresses.jump = pr.jump; lastPresses.attack = pr.attack; lastPresses.shoot = pr.shoot;
+
+      seq++;
+      const me = guest.players[1];
+      pending.push({ seq, x: me.x, y: me.y });
+      if (pending.length > 200) pending.shift();
+      const bits = packInput(state);
+      upLinkRef.send({ seq, bits, bk: lastBits.slice(0, 2) });
+      lastBits.unshift(bits);
+      if (lastBits.length > 3) lastBits.pop();
+    }
+  });
+
+  /* Aynı rastgele durum: düşmanlar iki motorda aynı fazda başlasın.
+     (Misafir zaten düşman AI'ı çalıştırmıyor ama başlangıç konumları eşleşsin.) */
+  guest.entities.enemies.forEach((en, i) => {
+    const h = host.entities.enemies[i];
+    if (h) { en.x = h.x; en.y = h.y; en.animTime = h.animTime; en.id = h.id; }
+  });
+  guest.entities.movingPlatforms.forEach((m, i) => {
+    const h = host.entities.movingPlatforms[i];
+    if (h) { m.x = h.x; m.y = h.y; m.animTime = h.animTime; }
+  });
+
+  const upLink = new FakeNetwork({ latency, jitter, loss });     // misafir → host (tuşlar)
+  const downLink = new FakeNetwork({ latency, jitter, loss });   // host → misafir (görüntü)
+  const buffer = new SnapshotBuffer(100);
+  upLinkRef = upLink;
+
+  let clock = 0;
+  let tick = 0;
+  let sinceSnap = 0, sinceInput = 0;
+  let maxSnapBytes = 0;
+
+  const samples = { peer: [], self: [], enemy: [], jerk: [], gate: 0, gateChecks: 0, offPath: [], hardSnaps: 0, snapCount: 0 };
+  let lastPeer = null, lastHost = null;
+  /* Işınlanma (ölüm/diriliş) anları: host konumu bir karede fizikle
+     açıklanamayacak kadar sıçradıysa oraya işaret koyuyoruz. O pencerede
+     "sapma" ölçmek gecikmeyi hata sayar; ölçümü dışarıda bırakıyoruz.
+     Işınlanmanın kendisi ayrı bir kontrolle (offPath) sınanıyor. */
+  const teleports = [];
+  let prevHostP0 = null;
+  /* Karakter uçuruma düşüp başa dönebiliyor; "hareket etti mi" sorusunu
+     son konumla değil ULAŞILAN EN UZAK NOKTA ile ölçüyoruz. */
+  let maxHostX = 0, maxGuestX = 0;
+  const history = [];
+
+  /* Misafir bir senaryo oynuyor: sağa koş, ara ara zıpla */
+  const gi = guest.inputs[1];
+  /* Host da hareket etmeli — yoksa "yoldaş sapması" ölçümü anlamsız olur
+     (durağan bir karakteri senkronlamak zaten hatasızdır). */
+  const hi = host.inputs[0];
+
+  const frames = Math.round(seconds / DT);
+  for (let f = 0; f < frames; f++) {
+    clock += DT * 1000;
+
+    /* --- Host'un tuşları (farklı ritim, ki iki karakter ayrışsın) --- */
+    const hPhase = Math.floor(f / 55) % 2;
+    hi.right = hPhase === 0;
+    hi.left = hPhase === 1;
+    if (f % 55 === 0) { hi.jumpHeld = true; hi._jumpBuffer = 0.13; hi.presses.jump++; }
+    else if (f % 55 === 14) hi.jumpHeld = false;
+
+    /* --- Misafirin tuşları ---
+       Uçuruma DÜŞMEYECEK şekilde gidip geliyor. Sürekli ölen bir senaryo,
+       "senkron kalitesi" ölçümünü ölüm/ışınlanma olaylarıyla dolduruyor ve
+       asıl ölçmek istediğimiz şeyi görünmez kılıyordu. Ölüm senkronu ayrı
+       bir senaryoda (bölüm 3) zaten sınanıyor. */
+    const phase = Math.floor(f / 40) % 2;
+    gi.right = reckless ? true : phase === 0;
+    gi.left = reckless ? false : phase === 1;
+    const wantJump = f % 45 === 0;
+    if (wantJump) { gi.jumpHeld = true; gi._jumpBuffer = 0.13; gi.presses.jump++; }
+    else if (f % 45 === 12) gi.jumpHeld = false;
+
+    /* --- Misafir tuşlarını yolla (30 Hz) --- */
+    /* --- Host gelen tuşları uygular --- */
+    for (const m of upLink.advance(DT * 1000)) {
+      host.applyRemoteInput(1, unpackInput(m.bits), m.seq,
+        Array.isArray(m.bk) ? m.bk.map(b => unpackInput(b || 0)) : null);
+    }
+
+    /* --- İki motor da adım atar --- */
+    host._step(DT);
+    guest._step(DT);
+
+    /* --- Host anlık görüntü yollar (20 Hz) --- */
+    sinceSnap += DT * 1000;
+    if (sinceSnap >= 1000 / 20) {
+      sinceSnap = 0;
+      const snap = serializeSnapshot(host, ++tick);
+      maxSnapBytes = Math.max(maxSnapBytes, JSON.stringify(snap).length);
+      downLink.send(snap);
+    }
+
+    /* --- Misafir gelenleri tamponlar --- */
+    for (const snap of downLink.advance(DT * 1000)) {
+      /* Uzlaştırma tamponlamadan ÖNCE ve paket başına BİR KEZ — CoopSession da böyle yapıyor */
+      const rErr = reconcileLocal(guest, snap, 1, pending);
+      if (rErr !== null && clock > 2000) {
+        /* 160px üstü düzeltmeler "gerçek olay" yolundan geçiyor: ölüm,
+           diriliş, kapıya çarpma. Bunlar senkron hatası değil, host'un
+           kararının uygulanması. Ortalamaya katmak, doğru çalışan bir
+           mekanizmayı hata gibi gösterirdi; ayrı sayılıyorlar. */
+        if (rErr > 160) samples.hardSnaps++;
+        else samples.self.push(rErr);
+      }
+      if (globalThis.__DIAG && rErr !== null) globalThis.__DIAG.push({ t: Math.round(clock), err: Math.round(rErr), ack: snap.ak?.seq, starve: host.inputs[1].starved, q: host.inputs[1].queue.length });
+      samples.snapCount++;
+      buffer.push(snap, clock);
+    }
+
+    /* --- Misafir 100 ms geçmişi oynatır --- */
+    const played = buffer.sample(clock);
+    if (played) applySnapshot(guest, played, 1);
+
+    maxHostX = Math.max(maxHostX, host.players[1].x);
+    maxGuestX = Math.max(maxGuestX, guest.players[1].x);
+
+    /* Host'un geçmişi — ölçüm bunun üstünden yapılacak */
+    history.push({
+      t: clock,
+      p0: { x: host.players[0].x, y: host.players[0].y },
+      p1: { x: host.players[1].x, y: host.players[1].y },
+      en: host.entities.enemies.map(e => ({ i: e.id, x: e.x, y: e.y }))
+    });
+    if (history.length > 400) history.shift();
+
+    const nowP0 = { x: host.players[0].x, y: host.players[0].y };
+    if (prevHostP0 && Math.hypot(nowP0.x - prevHostP0.x, nowP0.y - prevHostP0.y) > 60) {
+      teleports.push(clock);
+    }
+    prevHostP0 = nowP0;
+
+    /* --- Ölçüm (ilk 2 saniye ısınma sayılmaz) ---
+       Misafir bilerek 100 ms geriyi oynatıyor. Doğru karşılaştırma, onun
+       ŞU ANDA gösterdiği kare ile host'un 100 MS ÖNCEKİ gerçek hali.
+       (Oynattığı paketle kıyaslamak totoloji olurdu: elbette eşitler.) */
+    if (f > 120 && played) {
+      /* Misafirin gördüğü an = host zamanı − (tampon gecikmesi + ağ gecikmesi).
+         Paketler VARIŞ zamanıyla tamponlanıyor, üretim zamanıyla değil;
+         dolayısıyla toplam görsel gecikme ikisinin toplamı. Karşılaştırmayı
+         bu ana göre yapmazsak "gecikme"yi "hata" diye ölçmüş oluruz. */
+      const want = clock - (buffer.delay + latency);
+      let h = history[0];
+      for (const rec of history) { if (rec.t <= want) h = rec; else break; }
+
+      /* IŞINLANMA PENCERESİ
+         Ölüm/diriliş anında karakter bir karede haritanın öbür ucuna atlıyor.
+         Misafir bunu ağ gecikmesi kadar SONRA görüyor; bu gecikmedir, sapma
+         değil. Pencere payı tampon zamanlamasının bir paketlik kayması için. */
+      const nearTeleport = teleports.some(tt => Math.abs(tt - want) < 400);
+
+      /* YOLDAN SAPMA
+         Misafirin gösterdiği konum, host'un gerçekten bulunduğu bir noktaya
+         yakın olmak zorunda. Işınlanmayı interpole eden eski kod karakteri
+         hiç uğramadığı boşluklardan süzüyordu; bu kontrol onu yakalar. */
+      let nearest = Infinity;
+      for (const rec of history) {
+        const d = Math.hypot(guest.players[0].x - rec.p0.x, guest.players[0].y - rec.p0.y);
+        if (d < nearest) nearest = d;
+      }
+      samples.offPath.push(nearest);
+
+      if (!nearTeleport) {
+        samples.peer.push(Math.hypot(guest.players[0].x - h.p0.x, guest.players[0].y - h.p0.y));
+        /* Kendi karakterimin sapması BURADA ölçülmez.
+           Misafir tahmin ettiği için host'un önünde olması NORMAL — bunu
+           hata saymak, tahminin kendisini hata saymak olur. Gerçek ölçüt
+           uzlaştırmanın eşleşen simülasyon anlarında bulduğu fark;
+           o da snapshot geldiğinde toplanıyor (samples.self). */
+      }
+
+      /* TAKILMA: oyuncunun hissettiği şey konum hatası değil, yoldaşının
+         kare kare ZIPLAMASI. Ama karakterin kendi hareketi de hızlı
+         (zıplarken ~12px/kare) — sabit bir eşik yanıltır. Bu yüzden
+         misafirin kare farkını HOST'un aynı andaki kare farkıyla
+         kıyaslıyoruz: fazlası ağdan gelen takılmadır. */
+      if (lastPeer && lastHost && !nearTeleport) {
+        const guestStep = Math.hypot(guest.players[0].x - lastPeer.x, guest.players[0].y - lastPeer.y);
+        const hostStep = Math.hypot(h.p0.x - lastHost.x, h.p0.y - lastHost.y);
+        samples.jerk.push(Math.max(0, guestStep - hostStep));
+      }
+      lastPeer = { x: guest.players[0].x, y: guest.players[0].y };
+      lastHost = { x: h.p0.x, y: h.p0.y };
+
+      const hById = new Map(h.en.map(e => [e.i, e]));
+      for (const ge of guest.entities.enemies) {
+        const he = hById.get(ge.id);
+        if (he) samples.enemy.push(Math.hypot(ge.x - he.x, ge.y - he.y));
+      }
+
+      guest.entities.gates.forEach((g, i) => {
+        samples.gateChecks++;
+        const hg = host.entities.gates[i];
+        if (hg && Math.abs(g.open - hg.open) < 0.35 && g.latched === hg.latched) samples.gate++;
+      });
+    }
+  }
+
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+  const p95 = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.95)]; };
+
+  return {
+    peerAvg: avg(samples.peer), peerP95: p95(samples.peer),
+    selfAvg: avg(samples.self), selfP95: p95(samples.self),
+    enemyAvg: avg(samples.enemy), enemyP95: p95(samples.enemy),
+    jerkAvg: avg(samples.jerk), jerkP95: p95(samples.jerk), jerkMax: Math.max(0, ...samples.jerk),
+    offPathP95: p95(samples.offPath), offPathMax: Math.max(0, ...samples.offPath),
+    teleports: teleports.length,
+    gateAgree: samples.gateChecks ? samples.gate / samples.gateChecks : 1,
+    hardSnapRate: samples.snapCount ? samples.hardSnaps / samples.snapCount : 0,
+    maxSnapBytes,
+    hostX: maxHostX, guestX: maxGuestX,
+    dropped: downLink.dropped + upLink.dropped,
+    kbPerSec: (downLink.bytes + upLink.bytes) / 1024 / seconds
+  };
+}
+
+/* --------------------------------------------------------------------------
+   Senaryolar
+   -------------------------------------------------------------------------- */
+
+console.log('[net] simülasyonlar çalışıyor...\n');
+
+const good = simulate({ seconds: 12, latency: 45, jitter: 12, loss: 0 });
+check('iyi ağda yoldaş sapması < 10px', good.peerAvg < 10, `ort ${good.peerAvg.toFixed(1)}px`);
+check('iyi ağda fazladan takılma yok', good.jerkP95 < 6, `p95 ${good.jerkP95.toFixed(1)}px/kare fazla`);
+check('iyi ağda uzlaştırma hatası < 20px', good.selfAvg < 20, `ort ${good.selfAvg.toFixed(1)}px`);
+check('iyi ağda sert düzeltme nadir', good.hardSnapRate < 0.06, `%${(good.hardSnapRate * 100).toFixed(1)}`);
+check('iyi ağda düşman sapması < 8px', good.enemyAvg < 8, `ort ${good.enemyAvg.toFixed(1)}px`);
+check('kapı durumları tutarlı', good.gateAgree > 0.98, `%${(good.gateAgree * 100).toFixed(1)}`);
+check('anlık görüntü < 4 KB', good.maxSnapBytes < 4096, `${good.maxSnapBytes} bayt`);
+check('bant genişliği < 40 KB/sn', good.kbPerSec < 40, `${good.kbPerSec.toFixed(1)} KB/sn`);
+
+const bad = simulate({ seconds: 12, latency: 150, jitter: 60, loss: 0.05 });
+check('kötü ağda (150ms/%5 kayıp) yoldaş sapması < 25px', bad.peerAvg < 25, `ort ${bad.peerAvg.toFixed(1)}px`);
+check('kötü ağda fazladan takılma sınırlı', bad.jerkP95 < 14, `p95 ${bad.jerkP95.toFixed(1)}px/kare fazla`);
+/* Kötü ağ profili bilerek acımasız: 150 ms gecikme, ±60 ms dalgalanma ve
+   ÇİFT YÖNLÜ %5 paket kaybı. Türkiye'de iki ev arası bağlantı gerçekte
+   "iyi ağ" profiline çok daha yakın. Buradaki eşik "bozulmasın" eşiği,
+   "mükemmel olsun" eşiği değil. */
+check('kötü ağda uzlaştırma hatası sınırlı', bad.selfAvg < 90, `ort ${bad.selfAvg.toFixed(1)}px`);
+check('kötü ağda sert düzeltme sınırlı', bad.hardSnapRate < 0.35, `%${(bad.hardSnapRate * 100).toFixed(1)}`);
+check('kötü ağda paket kaybı yaşandı (test gerçekçi)', bad.dropped > 0, bad.dropped);
+check('kötü ağda kapılar hâlâ tutarlı', bad.gateAgree > 0.95, `%${(bad.gateAgree * 100).toFixed(1)}`);
+
+const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });
+check('bölüm 3 (boss bölümü) senkron kalıyor', l3.peerAvg < 15, `ort ${l3.peerAvg.toFixed(1)}px`);
+
+/* Bölüm 3'te senaryo yoldaşı uçuruma düşürüyor: ışınlanma davranışı burada
+   sınanabiliyor. Misafir, host'un hiç uğramadığı bir noktada görünmemeli. */
+check('bölüm 3 senaryosunda ölüm/diriliş yaşandı (test gerçekçi)',
+  l3.teleports > 0, `${l3.teleports} ışınlanma`);
+check('diriliş interpole edilip yoldaş boşluktan süzülmüyor',
+  l3.offPathMax < 60, `en fazla ${l3.offPathMax.toFixed(0)}px yol dışı`);
+check('iyi ağda yoldaş host\'un izlediği yolda kalıyor',
+  good.offPathP95 < 20, `p95 ${good.offPathP95.toFixed(1)}px yol dışı`);
+
+/* Misafirin karakteri gerçekten ilerliyor mu — tuşlar host'a ulaşıyor mu? */
+check('misafirin tuşları host tarafında karakteri hareket ettiriyor',
+  good.hostX > 200, `hostX=${good.hostX.toFixed(0)}`);
+check('misafirin ekranındaki karakteri host ile aynı mesafeyi katetti',
+  Math.abs(good.hostX - good.guestX) < 120, `host=${good.hostX.toFixed(0)} misafir=${good.guestX.toFixed(0)}`);
+
+/* --------------------------------------------------------------------------
+   Rapor
+   -------------------------------------------------------------------------- */
+
+console.log('=== NETCODE SİMÜLASYONU ===');
+console.table(results);
+
+console.log('Ölçümler:');
+console.table([
+  { senaryo: 'iyi ağ (45ms)',   yoldaş_ort: +good.peerAvg.toFixed(1), yoldaş_p95: +good.peerP95.toFixed(1), kendi_ort: +good.selfAvg.toFixed(1), düşman_ort: +good.enemyAvg.toFixed(1), takılma_p95: +good.jerkP95.toFixed(1), 'KB/sn': +good.kbPerSec.toFixed(1) },
+  { senaryo: 'kötü ağ (150ms)', yoldaş_ort: +bad.peerAvg.toFixed(1),  yoldaş_p95: +bad.peerP95.toFixed(1),  kendi_ort: +bad.selfAvg.toFixed(1),  düşman_ort: +bad.enemyAvg.toFixed(1),  takılma_p95: +bad.jerkP95.toFixed(1), 'KB/sn': +bad.kbPerSec.toFixed(1) },
+  { senaryo: 'bölüm 3',         yoldaş_ort: +l3.peerAvg.toFixed(1),   yoldaş_p95: +l3.peerP95.toFixed(1),   kendi_ort: +l3.selfAvg.toFixed(1),   düşman_ort: +l3.enemyAvg.toFixed(1),   takılma_p95: +l3.jerkP95.toFixed(1), 'KB/sn': +l3.kbPerSec.toFixed(1) }
+]);
+
+if (failures === 0) console.log(`\n✔ ${results.length} kontrolün tamamı geçti.\n`);
+else { console.log(`\n✘ ${failures}/${results.length} kontrol başarısız.\n`); process.exitCode = 1; }

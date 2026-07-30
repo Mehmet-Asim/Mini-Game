@@ -1,0 +1,50 @@
+﻿
+=== ├ç─░Z─░M KATMANI TEST─░ ===
+ÔöîÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö¼ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö¼ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö¼ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÉ
+Ôöé (index) Ôöé test                                            Ôöé sonu├ğ Ôöé not Ôöé
+Ôö£ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö╝ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö╝ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö╝ÔöÇÔöÇÔöÇÔöÇÔöÇÔöñ
+Ôöé 0       Ôöé 'b├Âl├╝m 1 oynan─▒┼ş ├ğizimi temiz'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 1       Ôöé 'b├Âl├╝m 2 oynan─▒┼ş ├ğizimi temiz'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 2       Ôöé 'b├Âl├╝m 3 oynan─▒┼ş ├ğizimi temiz'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 3       Ôöé 'boss d├Âv├╝┼ş├╝ ├ğizimi temiz'                      Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 4       Ôöé 'boss birden ├ğok faz g├Âsterdi'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 5       Ôöé 'boss telegraf faz─▒na giriyor'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 6       Ôöé 'anl─▒k g├Âr├╝nt├╝ misafire uygulanabiliyor'        Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 7       Ôöé 'mermi say─▒s─▒ korundu'                          Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 8       Ôöé 'mermi boyutu misafirde kuruldu'                Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 9       Ôöé 'mermi rengi misafirde kuruldu'                 Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 10      Ôöé 'sektirilen mermi misafirde de alt─▒n'           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 11      Ôöé 'ok a├ğ─▒s─▒ misafirde tan─▒ml─▒'                    Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 12      Ôöé 'saplanm─▒┼ş ok bilgisi ta┼ş─▒nd─▒'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 13      Ôöé 'M─░SAF─░R ekran─▒ hatas─▒z ├ğiziliyor'              Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 14      Ôöé "host boss'u tetikledi"                         Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 15      Ôöé 'boss anl─▒k g├Âr├╝nt├╝s├╝ misafire uygulanabiliyor' Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 16      Ôöé 'M─░SAF─░R ejderhay─▒ yaratt─▒'                     Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 17      Ôöé 'misafirde arena kilidi devreye girdi'          Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 18      Ôöé 'misafirde boss can─▒ do─şru'                     Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 19      Ôöé 'misafirde boss d├Âv├╝┼ş├╝ hatas─▒z ├ğiziliyor'       Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 20      Ôöé 'misafir haz─▒rl─▒k faz─▒n─▒ g├Âr├╝yor'               Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 21      Ôöé 'misafir savunmas─▒z an─▒ g├Âr├╝yor'                Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 22      Ôöé 'host taraf─▒nda k─▒l─▒├ğ savruluyor'               Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 23      Ôöé 'yolda┼ş─▒n k─▒l─▒c─▒ misafire ula┼şt─▒'               Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 24      Ôöé 'yolda┼ş─▒n ko┼şu d├Âng├╝s├╝ ilerliyor'               Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 25      Ôöé 'yolda┼ş─▒n animasyon saati ilerliyor'            Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 26      Ôöé 'yolda┼ş─▒n savurmas─▒ yerel olarak ak─▒yor'        Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 27      Ôöé 'yolda┼ş savururken ├ğizim temiz'                 Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 28      Ôöé 'zoom hedefe ula┼şt─▒'                            Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 29      Ôöé 'g├Âr├╝nen alan ekrandan geni┼ş'                   Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 30      Ôöé 'uzakla┼şmada sol kenar h├ól├ó kapsan─▒yor'         Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 31      Ôöé 'ger├ğekten uzaktaki nesne k─▒rp─▒l─▒yor'           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 32      Ôöé 'co-op kadraj─▒ ├ğifti ortal─▒yor'                 Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 33      Ôöé 'co-op kadraj─▒ uzakla┼şt─▒'                       Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 34      Ôöé 'darbe zoomu ├Âl├ğe─şi an─▒nda b├╝y├╝t├╝yor'           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 35      Ôöé 'darbe zoomu kadraj ├Âl├ğe─şine dokunmuyor'        Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 36      Ôöé 'darbe zoomu s├Ân├╝yor'                           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 37      Ôöé 's├Ânme sonras─▒ kadraj korundu'                  Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 38      Ôöé 'sa─ş s─▒n─▒r a┼ş─▒lm─▒yor'                           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+Ôöé 39      Ôöé 'sol s─▒n─▒r a┼ş─▒lm─▒yor'                           Ôöé 'Ô£ö'   Ôöé ''  Ôöé
+ÔööÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö┤ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö┤ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔö┤ÔöÇÔöÇÔöÇÔöÇÔöÇÔöİ
+├çizim ├ğa─şr─▒s─▒: 11.508.991
+
+Ô£ö 40 kontrol├╝n tamam─▒ ge├ğti.
+
