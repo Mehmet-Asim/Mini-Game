@@ -63,7 +63,13 @@ export class CoopSession {
     this.buffer.clear();
     /* Misafirin YEREL duraklatması host'a bildirilir. Host'unki zaten
        anlık görüntüdeki `st` ile gidiyor. */
-    engine.onHalt = (on, source) => { if (source === 'local') this.sendHalt(on); };
+    engine.onHalt = (on, source) => {
+      /* Duraklamadan çıkarken bayat veriyi at. Bekleyen girdi kayıtları
+         ve tampondaki anlık görüntüler duraklamadan öncesine ait; onlarla
+         uzlaşmak karakteri geçmişteki bir yere çekiyor. */
+      if (!on) { this.pendingInputs.length = 0; this.buffer.clear(); }
+      if (source === 'local') this.sendHalt(on);
+    };
     if (this.isHost) {
       this._startHostLoop();
       this.setPhase(PHASE.GAME, engine.levelIndex ?? 0);

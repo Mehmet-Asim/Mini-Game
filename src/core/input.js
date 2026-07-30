@@ -396,6 +396,21 @@ export class RemoteInput {
   destroy() {}
   bindTouch() {}
 
+  /**
+   * Bekleyen girdileri at ve tamponu sıfırla.
+   *
+   * Duraklamadan çıkarken çağrılır. Kuyruktakiler duraklamadan ÖNCEye ait;
+   * işlenirlerse karakter geçmişi yeniden oynar ve iki dünya ayrışır.
+   * Sekme arka plandayken bu kuyruk tıka basa doluyor.
+   */
+  flush() {
+    this.queue.length = 0;
+    this.primed = false;
+    this.targetDepth = PRIME_DEPTH;
+    this._lastState = null;
+    this.reset();
+  }
+
   /** Bağlantı koptuysa tuşları bırak — karakter duvara yaslanıp kalmasın */
   checkStale(ms = 1500) {
     if (this.lastAppliedAt && Date.now() - this.lastAppliedAt > ms) {

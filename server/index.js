@@ -24,6 +24,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 
 import {
   MSG, ERR, ERR_TEXT, PHASE, ROLE, NET,
@@ -422,9 +423,33 @@ function rateOk(conn) {
    Başlat / kapat
    -------------------------------------------------------------------------- */
 
+/* Bu makinenin dışarıdan erişilebilir adresleri.
+   Sunucuda çalışırken "localhost" hiçbir işe yaramıyor; hangi adresi
+   tarayıcıya yazacağını her seferinde aramak yerine burada yazdırıyoruz. */
+function externalAddresses() {
+  const out = [];
+  for (const [name, list] of Object.entries(networkInterfaces())) {
+    for (const ni of list || []) {
+      if (ni.family !== 'IPv4' && ni.family !== 4) continue;
+      if (ni.internal) continue;
+      out.push({ name, address: ni.address });
+    }
+  }
+  return out;
+}
+
 httpServer.listen(PORT, () => {
-  console.log(`[server] http://localhost:${PORT}  ·  ws://localhost:${PORT}/ws`);
-  console.log(`[server] depo: ${store.kind}  ·  protokol v${PROTOCOL_VERSION}`);
+  console.log(`[server] depo: ${store.kind}  ·  protokol v${PROTOCOL_VERSION}${SERVE_DIST ? '  ·  dist/ servis ediliyor' : ''}`);
+  console.log(`[server] yerel:    http://localhost:${PORT}`);
+  for (const { name, address } of externalAddresses()) {
+    console.log(`[server] ${name}: http://${address}:${PORT}`);
+  }
+  if (SERVE_DIST) {
+    console.log(`[server] kurulum: yukarıdaki adrese /#setup ekle`);
+  } else {
+    console.log('[server] NOT: istemci ayrı çalışıyor (npm run dev). Tek adresten');
+    console.log('[server]      yayınlamak için: node server/index.js --serve-dist');
+  }
 });
 
 async function shutdown() {

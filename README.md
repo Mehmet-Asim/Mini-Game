@@ -509,6 +509,11 @@ Hepsi gerçek hatalardan doğdu. Bu koda dokunan herkes okumalı.
 | **Anlık görüntüyle durum değişince `stateTimer` sıfırlanır** | Sıfırlanmazsa misafir bölüm sonu perdesine devraldığı sayaçla girip animasyonu hiç görmüyor. |
 | **Bölümü baştan yükleme kararı host'ta (`rs` sayacı)** | Toplanma bit maskesi yalnızca "toplandı" yönünde taşınıyor; sinyal olmadan misafir kalpsiz, kalkansız bir bölümde dolaşıyordu. |
 | **Anlatı verisi (hatıralar) ağdan geçmeli** | `storyUnlocked` yalnızca host'ta işleniyordu: teklifi ALAN kişi tek bir hatıra kartı görmüyor, final ekranına hatırasız giriyordu. |
+| **Sekme arka plana düşünce oyun İKİ TARAFTA da durur** | Tarayıcı arka plandaki sekmede `requestAnimationFrame`'i durdurur. Host sekmesi arkadayken yetkili dünya hiç adım atmıyor; misafir kendi ekranında yürüyor ama kalp toplamıyor, düşmanlar onu görmüyor, sekmeye dönülünce "sıfırlanıyor". |
+| **Aynı tarayıcıda iki SEKMEYLE co-op test edilemez** | Yalnızca öndeki sekme kare çevirir. Yan yana iki PENCERE ya da iki ayrı cihaz gerekir. |
+| **Duraklatma sebepleri sayılır, tek bayrakla tutulmaz** | Menü + hatıra kartı + arka plan aynı anda olabiliyor; kartı kapatmak arka plandaki sekmeyi çalıştırmaya başlıyordu. |
+| **Duraklamadan çıkarken girdi kuyruğu ve anlık görüntü tamponu boşaltılır** | İkisi de duraklamadan öncesine ait; işlemek karaktere geçmişi yeniden oynatıyor. |
+| **`navigator.clipboard` yalnızca https/localhost'ta vardır** | `http://IP:PORT` üzerinde tanımsız. Sessizce başarısız olunca kullanıcı kopyaladığını sanıp panosundaki ESKİ adresi yapıştırıyordu. |
 
 ### Prosedürel sanat
 

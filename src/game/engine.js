@@ -335,6 +335,10 @@ export class GameEngine {
     this.state = this._prevState || 'playing';
     this.lastTime = performance.now();
     this.accumulator = 0;
+    /* Bekleyen AĞ girdilerini at — hepsi duraklamadan öncesine ait.
+       Sekme arka plandayken kuyruk doluyor; işlemek karaktere geçmişi
+       yeniden oynatır. */
+    for (const inp of this.inputs) inp.flush?.();
     this.onHalt?.(false, source);
   }
 

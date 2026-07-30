@@ -86,8 +86,10 @@ const serverErrors = [];
 server.stderr.on('data', d => serverErrors.push(d.toString()));
 await new Promise((resolve, reject) => {
   const t = setTimeout(() => reject(new Error('sunucu açılmadı')), 8000);
+  /* Hazır işareti: açılış logundaki adres satırı. Log metnine bağlı
+     olduğu için tek bir kelimeye değil, port numarasına bakıyoruz. */
   server.stdout.on('data', (d) => {
-    if (d.toString().includes('ws://')) { clearTimeout(t); resolve(); }
+    if (d.toString().includes(`:${PORT}`)) { clearTimeout(t); resolve(); }
   });
 });
 const cleanupServer = () => { try { server.kill(); } catch { /* yoksay */ } };

@@ -527,6 +527,81 @@ async function runRealtime(sides, ms, onTick) {
 }
 
 /* ==========================================================================
+   8. ARKA PLANDAKİ SEKME — asıl "hayalet mod" sebebi
+
+   Tarayıcı arka plandaki sekmede requestAnimationFrame'i durdurur. Host
+   sekmesi arka plandayken host'un motoru hiç adım atmaz: misafirin
+   girdilerini işlemez, anlık görüntü üretmez. Misafir kendi ekranında
+   yürümeye devam eder ama yetkili dünyada kımıldamaz — kalp toplamaz,
+   düşmanlar onu görmez. Host sekmesine dönülünce yetkili konum geri gelir
+   ve misafir "sıfırlanmış" görünür.
+
+   Burada host'un karesini hiç çevirmeyerek arka planı taklit ediyoruz.
+   ========================================================================== */
+{
+  const hostNet = new FakeNet('host', 30), guestNet = new FakeNet('guest', 30);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+  const host = buildSide('host', hostNet), guest = buildSide('guest', guestNet);
+
+  await runRealtime([host, guest], 500);
+
+  /* --- Düzeltme YOKKEN ne oluyordu: yalnız koşan misafir --- */
+  const gi = guest.engine.inputs[1];
+  gi.right = true;
+  const guestStart = guest.engine.players[1].x;
+  const hostStart = host.engine.players[1].x;
+
+  /* Host sekmesi arka planda: SADECE misafirin karesi dönüyor */
+  await runRealtime([guest], 1500);
+  gi.right = false;
+
+  const guestRan = guest.engine.players[1].x - guestStart;
+  const hostRan = host.engine.players[1].x - hostStart;
+
+  check('arka plan taklidi gerçekten ayrışma üretiyor',
+    guestRan > 40 && Math.abs(hostRan) < 20,
+    `misafir=${guestRan.toFixed(0)}px host=${hostRan.toFixed(0)}px`);
+
+  /* --- Düzeltme: sekme gizlenince oyun İKİ TARAFTA da durur --- */
+  host.engine.pause('local');          // gameView'deki visibilitychange
+  await runRealtime([guest], 400);     // host hâlâ arka planda
+
+  check('HOST ARKA PLANA DÜŞÜNCE MİSAFİR DE DURUYOR',
+    guest.engine.state === 'paused', guest.engine.state);
+
+  const frozenAt = guest.engine.players[1].x;
+  gi.right = true;
+  await runRealtime([guest], 600);
+  gi.right = false;
+  check('duran misafir yalnız başına ilerlemiyor',
+    Math.abs(guest.engine.players[1].x - frozenAt) < 8,
+    `${(guest.engine.players[1].x - frozenAt).toFixed(0)}px kaydı`);
+
+  /* --- Sekmeye dönüldü --- */
+  host.engine.resume('local');
+  await runRealtime([host, guest], 800);
+  check('sekmeye dönünce iki taraf da devam ediyor',
+    host.engine.state === 'playing' && guest.engine.state === 'playing',
+    `host=${host.engine.state} misafir=${guest.engine.state}`);
+
+  check('bayat girdi kuyruğu boşaltıldı',
+    host.engine.inputs[1].queue.length < 6,
+    `${host.engine.inputs[1].queue.length} bekleyen girdi`);
+
+  /* Devam edince misafir yine host'un dünyasında hareket edebilmeli */
+  gi.right = true;
+  const reHost = host.engine.players[1].x;
+  await runRealtime([host, guest], 1200);
+  gi.right = false;
+  check('devam ettikten sonra misafir host tarafında yine hareket ediyor',
+    host.engine.players[1].x - reHost > 40,
+    `${(host.engine.players[1].x - reHost).toFixed(0)}px`);
+
+  host.session.destroy(); guest.session.destroy();
+  host.engine.stop(); guest.engine.stop();
+}
+
+/* ==========================================================================
    Rapor
    ========================================================================== */
 console.log('\n=== CO-OP ENTEGRASYON TESTİ ===');

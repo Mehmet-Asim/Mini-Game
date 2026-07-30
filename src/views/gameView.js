@@ -267,10 +267,42 @@ export function renderGameView(container, config, onComplete, opts = {}) {
   /* ---------- Yerel duraklatma ----------
      Bu tarayıcıdaki insan duraklattığında karşı taraf da durmalı; yoksa
      donmuş karakteri sahada yalnız kalıyor ve ORTAK candan kaybettiriyor.
-     Bildirimi motor yapıyor (engine.onHalt → CoopSession), burada sadece
-     "bunu ben istedim" demek yeterli. */
-  const localPause = () => engine.pause('local');
-  const localResume = () => engine.resume('local');
+     Bildirimi motor yapıyor (engine.onHalt → CoopSession).
+
+     Birden fazla sebep aynı anda duraklatabilir (menü + hatıra kartı +
+     sekme arka planda). Sayıyoruz; SON sebep kalkmadan devam etmiyoruz.
+     Yoksa hatıra kartını kapatmak, arka plana düşmüş sekmeyi de
+     çalıştırmaya başlıyordu. */
+  const holds = new Set();
+  const localPause = (reason = 'menu') => {
+    holds.add(reason);
+    engine.pause('local');
+  };
+  const localResume = (reason = 'menu') => {
+    holds.delete(reason);
+    if (holds.size === 0) engine.resume('local');
+  };
+
+  /* ---------- Sekme arka plana düştü ----------
+     TARAYICI ARKA PLANDAKİ SEKMEDE requestAnimationFrame'İ DURDURUR.
+
+     Bu, co-op için sessiz bir felaketti. Host sekmesi arka plandayken
+     host'un motoru hiç adım atmıyor: misafirin girdilerini işlemiyor,
+     anlık görüntü üretmiyor. Misafir kendi ekranında serbestçe yürümeye
+     devam ediyor ama yetkili dünyada hiç kımıldamıyor — kalp toplamıyor,
+     düşmanlar onu görmüyor. Host sekmesine geri dönüldüğünde yetkili
+     konum geri geliyor ve misafir "sıfırlanmış" görünüyor.
+
+     Çözüm: sekme görünmez olduğunda oyunu İKİ TARAFTA da duraklat.
+     Tek başına koşan bir dünya olmasın.
+
+     Not: aynı tarayıcıda İKİ SEKMEYLE test etmek bu yüzden hiç çalışmaz.
+     Yan yana iki PENCERE ya da iki ayrı cihaz gerekir. */
+  const onVisibility = () => {
+    if (document.hidden) localPause('hidden');
+    else localResume('hidden');
+  };
+  document.addEventListener('visibilitychange', onVisibility);
 
   /* ---------- Motor geri çağrıları ---------- */
   const callbacks = {
@@ -320,8 +352,8 @@ export function renderGameView(container, config, onComplete, opts = {}) {
       const msgs = config.messages || [];
       const text = msgs[index];
       if (!text) { showToast('Gizli bir hatıra buldun...', 2800); return; }
-      showStoryCard(overlay, text, index, () => localResume());
-      localPause();
+      showStoryCard(overlay, text, index, () => localResume('story'));
+      localPause('story');
     },
 
     onBossStart() {
@@ -429,6 +461,7 @@ export function renderGameView(container, config, onComplete, opts = {}) {
   return () => {
     if (toastTimer) clearTimeout(toastTimer);
     offChat?.();
+    document.removeEventListener('visibilitychange', onVisibility);
     netDebug.destroy();
     engine.stop();
   };
