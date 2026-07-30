@@ -11,6 +11,7 @@ import { Renderer } from '../render/renderer.js';
 import { Player } from './player.js';
 import { Dragon, BOSS_MAX_HP } from './boss.js';
 import { LEVELS, buildLevel, GROUND_Y, DEATH_Y } from './levels.js';
+import { createTicker } from '../core/ticker.js';
 import {
   MovingPlatform, CrumblePlatform, Spike, Walker, Flyer, Caster,
   Heart, LifeOrb, Checkpoint, Portal, Arrow, ShieldPickup,
@@ -291,11 +292,18 @@ export class GameEngine {
     this.running = true;
     this.lastTime = performance.now();
     this.accumulator = 0;
-    const loop = (now) => {
+
+    /* Kare kaynağı `createTicker`'dan geliyor, doğrudan rAF'ten değil.
+       Sebep: co-op'ta YETKİLİ simülasyonu host yürütüyor ve tarayıcı
+       arka plandaki sekmede rAF'i tamamen durduruyor. Host sekmesi
+       arkaya düştüğü an dünya donuyor, misafirin girdileri işlenmiyor ve
+       o "hayalet" oluyordu. Ticker gizliyken Worker zamanlayıcısına
+       geçiyor; simülasyon dönmeye devam ediyor, yalnızca çizim atlanıyor. */
+    this.ticker = createTicker((now, visible) => {
       if (!this.running) return;
       let frameTime = (now - this.lastTime) / 1000;
       this.lastTime = now;
-      if (frameTime > 0.25) frameTime = 0.25;   // sekme değişimi koruması
+      if (frameTime > 0.25) frameTime = 0.25;   // uzun duraklamadan dönüş koruması
 
       /* Ağ katmanı buraya giriyor: misafir, fizik adımından ÖNCE gelen
          anlık görüntüyü uygular. Sonra uygularsa kendi tahmini bir kare
@@ -311,10 +319,11 @@ export class GameEngine {
       }
       if (steps === MAX_STEPS) this.accumulator = 0;
 
-      this.renderer.render(this._renderState(), frameTime);
-      this.rafId = requestAnimationFrame(loop);
-    };
-    this.rafId = requestAnimationFrame(loop);
+      /* Gizliyken çizmeye gerek yok — kimse bakmıyor, tuval de zaten
+         ekrana aktarılmıyor. Simülasyon yine döndü, önemli olan o. */
+      if (visible) this.renderer.render(this._renderState(), frameTime);
+    });
+    this.ticker.start();
   }
 
   /* --------------------------------------------------------------------
@@ -360,7 +369,8 @@ export class GameEngine {
 
   stop() {
     this.running = false;
-    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.ticker?.stop();
+    this.ticker = null;
     for (const inp of this.inputs) inp.destroy();
     window.removeEventListener('resize', this._onResize);
   }
@@ -401,6 +411,10 @@ export class GameEngine {
      Ana adım
      ====================================================================== */
   _step(dt) {
+    /* Teşhis sayacı: simülasyon gerçekten dönüyor mu? Arka plandaki
+       sekmede bu sayının 60/sn kalması, ticker'ın işini yaptığı anlamına
+       gelir. Panelde görünüyor (?debug=1). */
+    this.stepCount = (this.stepCount || 0) + 1;
     if (this.state === 'paused') return;
 
     if (this.inputs[this.localIndex].consumePause() && this.cb.onPause) {

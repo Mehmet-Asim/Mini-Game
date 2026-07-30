@@ -284,25 +284,16 @@ export function renderGameView(container, config, onComplete, opts = {}) {
   };
 
   /* ---------- Sekme arka plana düştü ----------
-     TARAYICI ARKA PLANDAKİ SEKMEDE requestAnimationFrame'İ DURDURUR.
+     BURADA ARTIK HİÇBİR ŞEY YAPMIYORUZ — bilerek.
 
-     Bu, co-op için sessiz bir felaketti. Host sekmesi arka plandayken
-     host'un motoru hiç adım atmıyor: misafirin girdilerini işlemiyor,
-     anlık görüntü üretmiyor. Misafir kendi ekranında serbestçe yürümeye
-     devam ediyor ama yetkili dünyada hiç kımıldamıyor — kalp toplamıyor,
-     düşmanlar onu görmüyor. Host sekmesine geri dönüldüğünde yetkili
-     konum geri geliyor ve misafir "sıfırlanmış" görünüyor.
+     Bir tur "sekme gizlenince oyunu duraklat" denedim ve daha kötü oldu:
+     iki sekmeyle test etmek imkânsızlaştı ve sekme değiştiren oyuncu
+     donmuş bir ekran gördü. Semptomu gizleyip sebebi çözmeyen bir yamaydı.
 
-     Çözüm: sekme görünmez olduğunda oyunu İKİ TARAFTA da duraklat.
-     Tek başına koşan bir dünya olmasın.
-
-     Not: aynı tarayıcıda İKİ SEKMEYLE test etmek bu yüzden hiç çalışmaz.
-     Yan yana iki PENCERE ya da iki ayrı cihaz gerekir. */
-  const onVisibility = () => {
-    if (document.hidden) localPause('hidden');
-    else localResume('hidden');
-  };
-  document.addEventListener('visibilitychange', onVisibility);
+     Gerçek sebep, gizli sekmede `requestAnimationFrame`'in durmasıydı.
+     Çözüm `src/core/ticker.js`: kare kaynağı gizliyken Worker
+     zamanlayıcısına geçiyor, simülasyon 60 Hz dönmeye devam ediyor ve
+     yalnızca çizim atlanıyor. Duraklatmaya gerek kalmadı. */
 
   /* ---------- Motor geri çağrıları ---------- */
   const callbacks = {
@@ -466,7 +457,6 @@ export function renderGameView(container, config, onComplete, opts = {}) {
   return () => {
     if (toastTimer) clearTimeout(toastTimer);
     offChat?.();
-    document.removeEventListener('visibilitychange', onVisibility);
     netDebug.destroy();
     engine.stop();
   };

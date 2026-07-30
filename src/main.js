@@ -216,8 +216,6 @@ function navigateTo(view) {
         onSkipRequest: session && !session.isHost
           ? () => session.requestSkip()
           : null,
-        /* Sekme arka plana düşünce iki taraf da bekler */
-        onHold: (held) => session?.holdScene(held),
         onChoice: (id) => session?.sendChoice(id),
         onEnd: () => afterCinematic(sceneId, null),
         onSceneChange: (nextId, choice) => afterCinematic(sceneId, nextId, choice)

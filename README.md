@@ -61,6 +61,24 @@ npm run perf           # kare maliyeti + en pahalı katman
 **Her commit öncesi `npm test`.** Neden bu kadar önemli olduğu
 [Test ve araçlar](#test-ve-araçlar) bölümünde.
 
+### Testlerin GÖREMEDİĞİ şeyler
+
+Bu paketler Node'da çalışır. Node'da `requestAnimationFrame`, gerçek
+klavye, gerçek çizim ve gerçek sekme görünürlüğü **yoktur** — kare
+döngüsü elle çevrilir. Dolayısıyla şu sınıf hatalar testlerden sessizce
+geçer ve yalnızca tarayıcıda görülür:
+
+| Görünmeyen | Neden |
+|---|---|
+| Gizli sekmede rAF'in durması | Node'da rAF yok; döngüyü test çeviriyor |
+| Odak/`focus` davranışı, tuşların yutulması | Gerçek DOM olayı yok |
+| Çizim hataları, kadraj, okunabilirlik | Sahte 2D bağlam hiçbir şey çizmiyor |
+| Tarayıcı zamanlayıcı kısıtlamaları | Node kısmıyor |
+
+Bu yüzden oyun içinde **`?debug=1`** paneli var. En kritik satır
+`SİMÜLASYON`: sekmeyi arka plana alıp geri gel, sayı 60 civarında
+kalmalı. Düşüyorsa yetkili dünya donuyor demektir.
+
 ---
 
 ## Proje durumu
@@ -509,9 +527,10 @@ Hepsi gerçek hatalardan doğdu. Bu koda dokunan herkes okumalı.
 | **Anlık görüntüyle durum değişince `stateTimer` sıfırlanır** | Sıfırlanmazsa misafir bölüm sonu perdesine devraldığı sayaçla girip animasyonu hiç görmüyor. |
 | **Bölümü baştan yükleme kararı host'ta (`rs` sayacı)** | Toplanma bit maskesi yalnızca "toplandı" yönünde taşınıyor; sinyal olmadan misafir kalpsiz, kalkansız bir bölümde dolaşıyordu. |
 | **Anlatı verisi (hatıralar) ağdan geçmeli** | `storyUnlocked` yalnızca host'ta işleniyordu: teklifi ALAN kişi tek bir hatıra kartı görmüyor, final ekranına hatırasız giriyordu. |
-| **Sekme arka plana düşünce oyun İKİ TARAFTA da durur** | Tarayıcı arka plandaki sekmede `requestAnimationFrame`'i durdurur. Host sekmesi arkadayken yetkili dünya hiç adım atmıyor; misafir kendi ekranında yürüyor ama kalp toplamıyor, düşmanlar onu görmüyor, sekmeye dönülünce "sıfırlanıyor". |
-| **Aynı tarayıcıda iki SEKMEYLE co-op test edilemez** | Yalnızca öndeki sekme kare çevirir. Yan yana iki PENCERE ya da iki ayrı cihaz gerekir. |
-| **Duraklatma sebepleri sayılır, tek bayrakla tutulmaz** | Menü + hatıra kartı + arka plan aynı anda olabiliyor; kartı kapatmak arka plandaki sekmeyi çalıştırmaya başlıyordu. |
+| **Simülasyon rAF'e bağlanmaz — `core/ticker.js` kullanılır** | Tarayıcı gizli sekmede `requestAnimationFrame`'i durdurur. Host sekmesi arkadayken YETKİLİ dünya hiç adım atmıyor, misafir "hayalet" oluyordu. Ticker gizliyken Worker zamanlayıcısına geçer; Worker'daki zamanlayıcılar kısılmaz. Çizim atlanır, simülasyon döner. |
+| **Sekme gizlenince oyunu DURAKLATMA** | Bir tur denendi ve daha kötü oldu: iki sekmeyle test imkânsızlaştı, sekme değiştiren oyuncu donmuş ekran gördü, "atla" tuşu çalışmaz göründü. Semptomu gizleyip sebebi çözmeyen yamaydı. Sebep ticker ile çözüldü. |
+| **Ana iş parçacığında `setInterval` yedek değildir** | Arka planda saniyede bire kısılıyor. Worker şart. |
+| **Duraklatma sebepleri sayılır, tek bayrakla tutulmaz** | Menü + hatıra kartı aynı anda olabiliyor; kartı kapatmak menüyü de açıyordu. |
 | **Duraklamadan çıkarken girdi kuyruğu ve anlık görüntü tamponu boşaltılır** | İkisi de duraklamadan öncesine ait; işlemek karaktere geçmişi yeniden oynatıyor. |
 | **`navigator.clipboard` yalnızca https/localhost'ta vardır** | `http://IP:PORT` üzerinde tanımsız. Sessizce başarısız olunca kullanıcı kopyaladığını sanıp panosundaki ESKİ adresi yapıştırıyordu. |
 | **Ağda eşleşen kimlikler bölüm TANIMINDAN türetilir, sayaçtan değil** | Düşman id'si global artan sayaçtan geliyordu. İki taraf farklı sayıda bölüm yükleyince id'ler kalıcı kaydı; `applySnapshot` eşleşmeyeni "ölmüş" sayıp sildi ve düşman yaratamadığı için misafir BOMBOŞ bir bölümde kaldı. |

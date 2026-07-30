@@ -19,6 +19,7 @@ import { getScene, sceneAfterChoice } from '../cinematic/scenes/index.js';
 import { preloadPixelSprites } from '../cinematic/art/pixelSprites.js';
 import { audioManager } from '../audio.js';
 import { S } from '../cinematic/script.js';
+import { createTicker } from '../core/ticker.js';
 
 export function renderCinematicView(container, opts = {}) {
   const sceneId = opts.sceneId || 'intro';
@@ -65,7 +66,7 @@ export function renderCinematicView(container, opts = {}) {
   const cardLayer = new CardLayer(overlay);
   const choiceLayer = new ChoiceLayer(overlay, (id) => director.submitChoice(id));
 
-  let rafId = null;
+  let ticker = null;
   let last = 0;
   let destroyed = false;
 
@@ -124,13 +125,23 @@ export function renderCinematicView(container, opts = {}) {
     try { fn.call(audioManager); } catch { /* ses hatası sahneyi durdurmaz */ }
   }
 
-  /* ---------- Ana döngü ---------- */
-  function loop(now) {
+  /* ---------- Ana döngü ----------
+     Kare kaynağı ticker: gizli sekmede rAF durur ama sahne saati DURMAMALI.
+     Host'un saati donunca misafir donmuş bir zamana kilitleniyor, sahne
+     takılıyor ve `syncTo` geri sardığı için başa dönüyordu. */
+  function loop(now, visible = true) {
     if (destroyed) return;
     const dt = Math.min(0.05, (now - last) / 1000 || 0);
     last = now;
 
     director.update(dt);
+
+    /* Sahne saati yayını (host) burada da sürsün — çizim atlansa bile
+       misafir doğru zamanı almalı. */
+    if (opts.onTime) opts.onTime(director.time, director.awaitingChoice);
+    if (director.ended) { stopLoop(); return; }
+    if (!visible) return;                    // hesap döndü, çizime gerek yok
+
     const state = director.evaluate();
 
     stage.begin(scene.clear || '#05070d');
@@ -147,58 +158,50 @@ export function renderCinematicView(container, opts = {}) {
 
     progressEl.style.transform = `scaleX(${state.progress.toFixed(4)})`;
     if (skipBtn) skipBtn.style.opacity = director.awaitingChoice ? '0' : '';
+  }
 
-    if (opts.onTime) opts.onTime(director.time, director.awaitingChoice);
-
-    /* Sahne bittiyse son kare tuvalde kalsın ama döngü dursun —
-       aksi halde bitmiş bir sahne sonsuza dek 60 fps yakmaya devam ediyordu. */
-    if (director.ended) { rafId = null; return; }
-
-    rafId = requestAnimationFrame(loop);
+  /* Sahne bittiğinde döngü durur — bitmiş bir sahne sonsuza dek kare
+     yakmaya devam etmemeli. */
+  function stopLoop() {
+    ticker?.stop();
+    ticker = null;
   }
 
   function startLoop() {
-    if (rafId || destroyed) return;
-    rafId = requestAnimationFrame((t) => { last = t; loop(t); });
+    if (ticker || destroyed) return;
+    last = performance.now();
+    ticker = createTicker((now, visible) => loop(now, visible));
+    ticker.start();
   }
   /* Arka plan ve sprite'lar ilk kareden önce hazır olsun; yükleme hatasında
      hybrid katmanlar prosedürel çizime düşer ve sahne yine başlar. */
   Promise.all([preloadScene(scene), preloadPixelSprites()]).finally(startLoop);
 
   /* ---------- Bekleme ----------
-     İki ayrı sebep sahneyi bekletebilir:
+     Sekme gizlenince sahneyi DURDURMUYORUZ.
 
-       localHidden  bu sekme arka plana düştü
-       netHold      karşı tarafın sekmesi arka plana düştü
+     Bir tur bunu denedim ve daha kötü oldu: iki sekmeyle test etmek
+     imkânsızlaştı, sekme değiştirince sahne donuyor ve "atla" tuşu
+     çalışmıyor gibi görünüyordu (host beklemedeyken misafir saati komple
+     yok sayıyordu). Semptomu gizleyip sebebi çözmeyen bir yamaydı.
 
-     TARAYICI ARKA PLANDAKİ SEKMEDE requestAnimationFrame'İ DURDURUR ama
-     setInterval'i durdurmaz. Yani host arka plandayken sahne saati donuyor,
-     buna rağmen yayınlanmaya devam ediyordu. Misafir donmuş saate
-     kilitlenince sahne ilerlemiyor, takılıyor ve `syncTo` geri sardığı
-     için başa dönüyordu. Sinematik ortak bir an: biri sekmeden çıkınca
-     diğeri tek başına izlemeye devam etmemeli. */
-  let localHidden = false;
+     Gerçek sebep, gizli sekmede rAF'in durmasıydı — o da artık
+     `createTicker` ile çözüldü: saat Worker zamanlayıcısıyla dönmeye
+     devam ediyor, sadece çizim atlanıyor.
+
+     `netHold` yine de duruyor çünkü geçerli bir kullanımı var: karşı
+     taraf gerçekten beklediğini bildirirse (ileride "duraklat" gibi)
+     sahne bekler. Görünürlükle tetiklenmiyor. */
   let netHold = false;
 
   function applyHold() {
-    const held = localHidden || netHold;
-    director.playing = !held;
-    if (held) {
-      frame.classList.add('is-held');
-    } else {
-      frame.classList.remove('is-held');
-      /* Beklerken biriken süre tek karede akmasın */
+    director.playing = !netHold;
+    frame.classList.toggle('is-held', netHold);
+    if (!netHold) {
       last = performance.now();
       if (!director.ended) startLoop();
     }
   }
-
-  const onVisibility = () => {
-    localHidden = document.hidden;
-    applyHold();
-    opts.onHold?.(localHidden);
-  };
-  document.addEventListener('visibilitychange', onVisibility);
 
   /* ---------- Atla ---------- */
   function doSkip() {
@@ -270,10 +273,9 @@ export function renderCinematicView(container, opts = {}) {
   function cleanup(soft = false) {
     if (destroyed) return;
     destroyed = true;
-    if (rafId) cancelAnimationFrame(rafId);
+    stopLoop();
     ro.disconnect();
     window.removeEventListener('keydown', onKey);
-    document.removeEventListener('visibilitychange', onVisibility);
     cardLayer.clear();
     choiceLayer.clear();
     if (!soft) container.innerHTML = '';

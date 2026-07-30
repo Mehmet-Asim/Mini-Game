@@ -43,8 +43,8 @@ export function attachNetDebug(host, engine, session) {
 
   /* Saniyelik hız ölçümü için sayaç örnekleri */
   let last = performance.now();
-  let prev = { sent: 0, received: 0, seq: 0, lastSeq: 0 };
-  let rate = { out: 0, in: 0 };
+  let prev = { sent: 0, received: 0, steps: 0 };
+  let rate = { out: 0, in: 0, steps: 0 };
 
   const tick = () => {
     const now = performance.now();
@@ -54,8 +54,10 @@ export function attachNetDebug(host, engine, session) {
       const s = session?.stats || { sent: 0, received: 0 };
       rate.out = (s.sent - prev.sent) / dt;
       rate.in = (s.received - prev.received) / dt;
+      rate.steps = ((engine.stepCount || 0) - prev.steps) / dt;
       prev.sent = s.sent;
       prev.received = s.received;
+      prev.steps = engine.stepCount || 0;
     }
     if (open) el.innerHTML = render();
   };
@@ -72,7 +74,14 @@ export function attachNetDebug(host, engine, session) {
     const lines = [
       row('ROL', `${isHost ? 'HOST' : 'MİSAFİR'} · oyuncu ${engine.localIndex}`),
       row('BAĞLANTI', `${net?.status || '—'} · ${FMT(net?.rtt)} ms`),
-      row('DURUM', `${engine.state}${engine.pausedBy ? ` (${engine.pausedBy})` : ''}`)
+      row('DURUM', `${engine.state}${engine.pausedBy ? ` (${engine.pausedBy})` : ''}`),
+      /* EN ÖNEMLİ SATIR.
+         Simülasyon dönmüyorsa başka hiçbir şeyin anlamı yok. Sekmeyi arka
+         plana alıp geri geldiğinde bu sayının 60 civarında kalmış olması
+         gerekir — kaynak `raf`'ten `worker`'a geçer ama hız düşmez.
+         Düşüyorsa "misafir hayalet" hatası geri gelmiş demektir. */
+      row('SİMÜLASYON', `${FMT(rate.steps)} adım/sn · ${engine.ticker?.mode || '—'}`,
+        rate.steps > 45)
     ];
 
     if (isHost) {
