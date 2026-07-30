@@ -165,11 +165,55 @@ export function renderCinematicView(container, opts = {}) {
      hybrid katmanlar prosedürel çizime düşer ve sahne yine başlar. */
   Promise.all([preloadScene(scene), preloadPixelSprites()]).finally(startLoop);
 
+  /* ---------- Bekleme ----------
+     İki ayrı sebep sahneyi bekletebilir:
+
+       localHidden  bu sekme arka plana düştü
+       netHold      karşı tarafın sekmesi arka plana düştü
+
+     TARAYICI ARKA PLANDAKİ SEKMEDE requestAnimationFrame'İ DURDURUR ama
+     setInterval'i durdurmaz. Yani host arka plandayken sahne saati donuyor,
+     buna rağmen yayınlanmaya devam ediyordu. Misafir donmuş saate
+     kilitlenince sahne ilerlemiyor, takılıyor ve `syncTo` geri sardığı
+     için başa dönüyordu. Sinematik ortak bir an: biri sekmeden çıkınca
+     diğeri tek başına izlemeye devam etmemeli. */
+  let localHidden = false;
+  let netHold = false;
+
+  function applyHold() {
+    const held = localHidden || netHold;
+    director.playing = !held;
+    if (held) {
+      frame.classList.add('is-held');
+    } else {
+      frame.classList.remove('is-held');
+      /* Beklerken biriken süre tek karede akmasın */
+      last = performance.now();
+      if (!director.ended) startLoop();
+    }
+  }
+
+  const onVisibility = () => {
+    localHidden = document.hidden;
+    applyHold();
+    opts.onHold?.(localHidden);
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+
   /* ---------- Atla ---------- */
-  if (skipBtn) skipBtn.addEventListener('click', () => director.skip());
+  function doSkip() {
+    if (director.awaitingChoice) return;
+    /* Ağ oyununda zamanı host yönetiyor. Misafir doğrudan atlarsa iki
+       sahne ayrışır; bu yüzden isteği host'a yolluyor ve host atlayınca
+       yeni zaman normal senkronla geri geliyor. */
+    if (opts.onSkipRequest) opts.onSkipRequest();
+    else director.skip();
+  }
+
+  if (skipBtn) skipBtn.addEventListener('click', doSkip);
 
   const onKey = (e) => {
-    if (e.code === 'Escape' && showSkip && !director.awaitingChoice) director.skip();
+    if (e.code === 'Escape' && showSkip) doSkip();
   };
   window.addEventListener('keydown', onKey);
 
@@ -229,6 +273,7 @@ export function renderCinematicView(container, opts = {}) {
     if (rafId) cancelAnimationFrame(rafId);
     ro.disconnect();
     window.removeEventListener('keydown', onKey);
+    document.removeEventListener('visibilitychange', onVisibility);
     cardLayer.clear();
     choiceLayer.clear();
     if (!soft) container.innerHTML = '';
@@ -239,5 +284,7 @@ export function renderCinematicView(container, opts = {}) {
   cleanup.seek = (t) => director.seek(t);
   cleanup.syncTo = (t) => director.syncTo(t);
   cleanup.submitChoice = (id) => director.submitChoice(id);
+  /** Karşı taraf bekletti / devam etti */
+  cleanup.setNetHold = (v) => { netHold = !!v; applyHold(); };
   return cleanup;
 }

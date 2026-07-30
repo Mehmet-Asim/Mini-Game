@@ -375,7 +375,12 @@ export function renderGameView(container, config, onComplete, opts = {}) {
       opts.session?.setPhase?.('game', nextIdx);
       showLevelTransition(overlay, nextIdx, () => {
         audioManager.playTrack(LEVELS[nextIdx].theme);
-        next();
+        /* MİSAFİR BÖLÜMÜ KENDİ YÜKLEMEZ.
+           Yükleme tek yetkiliye bağlı: host yükleyince `rs` sayacı artıyor
+           ve misafir onu görüp yüklüyor (bkz. snapshot.js). İki taraf ayrı
+           ayrı yüklerse dünyalar bir an ayrışıyor ve o aralıkta gelen bayat
+           paket misafirin düşmanlarını siliyordu. */
+        if (opts.netMode !== 'guest') next();
       });
     },
 

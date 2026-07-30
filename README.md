@@ -514,6 +514,12 @@ Hepsi gerçek hatalardan doğdu. Bu koda dokunan herkes okumalı.
 | **Duraklatma sebepleri sayılır, tek bayrakla tutulmaz** | Menü + hatıra kartı + arka plan aynı anda olabiliyor; kartı kapatmak arka plandaki sekmeyi çalıştırmaya başlıyordu. |
 | **Duraklamadan çıkarken girdi kuyruğu ve anlık görüntü tamponu boşaltılır** | İkisi de duraklamadan öncesine ait; işlemek karaktere geçmişi yeniden oynatıyor. |
 | **`navigator.clipboard` yalnızca https/localhost'ta vardır** | `http://IP:PORT` üzerinde tanımsız. Sessizce başarısız olunca kullanıcı kopyaladığını sanıp panosundaki ESKİ adresi yapıştırıyordu. |
+| **Ağda eşleşen kimlikler bölüm TANIMINDAN türetilir, sayaçtan değil** | Düşman id'si global artan sayaçtan geliyordu. İki taraf farklı sayıda bölüm yükleyince id'ler kalıcı kaydı; `applySnapshot` eşleşmeyeni "ölmüş" sayıp sildi ve düşman yaratamadığı için misafir BOMBOŞ bir bölümde kaldı. |
+| **Bölümü yalnızca host yükler (`rs` kuşak sayacı)** | İki taraf ayrı ayrı yükleyince aradaki boşlukta gelen bayat paket misafirin dünyasını siliyordu. |
+| **Bayat kuşaktan gelen paket UYGULANMAZ, atılır** | Karşılaştırma eşitlik değil sıra olmalı: eski kuşak yoksayılır, yeni kuşak yükleme tetikler. |
+| **Yalnızca host'un çözdüğü her durum ağdan geçmeli** | `spawnPoint` geçmiyordu: kontrol noktalarını host çözüyor, misafir ölümden sonra kendini BÖLÜM BAŞINA koyuyor ve uzlaştırma karakteri bir uçtan bir uca savuruyordu. |
+| **"Yoldaşım kopuk" ile "benim hattım kopuk" ayrı şeylerdir** | Tek bayrak vardı; kendi soketi titreyen oyuncu sonsuza dek duraklamış kalıyordu, çünkü sunucu "rejoined"i KARŞI tarafa yolluyor. |
+| **Hat kopukken anlık görüntü oyunu açmamalı** | Host'un "ben oynuyorum" demesi bizim soketimizin düştüğü gerçeğini değiştirmiyor; açarsak oyuncu kopuk hatta tek başına oynuyor. |
 
 ### Prosedürel sanat
 

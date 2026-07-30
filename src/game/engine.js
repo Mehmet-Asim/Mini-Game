@@ -185,11 +185,6 @@ export class GameEngine {
        taşınıyor; baştan yükleme bilgisi gitmezse misafir kalpsiz bir
        bölümde dolaşıyordu. */
     this.loadSerial = (this.loadSerial || 0) + 1;
-    /* Misafir kendi yüklemelerini de sayar (bölüm geçiş perdesi sonunda
-       host'la aynı anda yüklüyor). İki sayaç aynı hızda ilerlediği için
-       yalnızca GERÇEK bir fark — host'un tek taraflı baştan yüklemesi —
-       misafirde yeniden yükleme tetikler. */
-    if (this.netMode === 'guest') this._netLoadSerial = (this._netLoadSerial || 0) + 1;
     const def = LEVELS[idx];
     this.level = buildLevel(def);
     this.renderer.setTheme(def.theme);
@@ -210,11 +205,32 @@ export class GameEngine {
       for (const l of (def.coopLifts || [])) e.coopLifts.push(new CoopLift(l));
     }
 
-    for (const en of (def.enemies || [])) {
-      if (en.type === 'walker') e.enemies.push(new Walker(en));
-      else if (en.type === 'flyer') e.enemies.push(new Flyer(en));
-      else if (en.type === 'caster') e.enemies.push(new Caster(en));
-    }
+    /* ------------------------------------------------------------------
+       DÜŞMAN KİMLİĞİ BÖLÜM TANIMINDAN TÜRETİLİR, SAYAÇTAN DEĞİL.
+
+       `Entity` kurucusu global artan bir sayaçtan id veriyor. Ağ üstünde
+       düşmanlar bu id ile eşleşiyor ve id'ler iki tarayıcıda aynı olmak
+       ZORUNDA. Sayaç ise "bu sekmede şimdiye kadar kaç varlık yaratıldı"
+       demek — iki taraf farklı sayıda bölüm yüklerse (yeniden başlatma,
+       bölüm geçişi, yeniden bağlanma) id'ler kalıcı olarak kayıyordu.
+
+       Sonuç ağır: `applySnapshot` gelen id'yi kendi listesinde bulamıyor,
+       "listede yoksa ölmüştür" diyerek hepsini siliyor ve bu fonksiyon
+       düşman YARATAMADIĞI için bir daha geri gelmiyorlardı. Misafir
+       bomboş bir bölümde dolaşıyordu — "canavarlar beni fark etmiyor".
+
+       Bölüm indeksi + tanımdaki sıra, yükleme geçmişinden bağımsız olarak
+       her zaman aynı sayıyı veriyor.
+       ------------------------------------------------------------------ */
+    (def.enemies || []).forEach((en, i) => {
+      let obj = null;
+      if (en.type === 'walker') obj = new Walker(en);
+      else if (en.type === 'flyer') obj = new Flyer(en);
+      else if (en.type === 'caster') obj = new Caster(en);
+      if (!obj) return;
+      obj.id = (def.id ?? idx) * 1000 + i;
+      e.enemies.push(obj);
+    });
 
     for (const [hx, hy] of (def.hearts || [])) e.hearts.push(new Heart({ x: hx, y: hy }));
     for (const sh of (def.storyHearts || [])) {

@@ -602,6 +602,259 @@ async function runRealtime(sides, ms, onTick) {
 }
 
 /* ==========================================================================
+   9. SİNEMATİK + ARKA PLANDAKİ SEKME
+
+   Oyunla aynı kök sebep, farklı sonuç. Host sekmesi arka plandayken
+   `requestAnimationFrame` durur ama sahne saatini yayınlayan `setInterval`
+   DURMAZ — host donmuş bir saati yayınlamaya devam eder. Misafir ona
+   kilitlenince sahne ilerlemez, takılır ve `syncTo` geri sardığı için
+   başa döner.
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'a', targetName: 'b', proposalText: 'Soru?' };
+
+  const hostNet = new FakeNet('host', 30), guestNet = new FakeNet('guest', 30);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const hostSession = new CoopSession(hostNet, {});
+  const guestSession = new CoopSession(guestNet, {});
+
+  const hostD = new Director(SCENES['intro'], { config });
+  const guestD = new Director(SCENES['intro'], { config });
+
+  /* cinematicView'in yaptığı bağlantı: karşı taraf bekletince
+     yerel yönetmen de durur */
+  hostSession.attachDirector(hostD, { onHold: (v) => { hostD.playing = !v; } });
+  guestSession.attachDirector(guestD, { onHold: (v) => { guestD.playing = !v; } });
+
+  hostD.seek(4); guestD.seek(4);
+
+  /* Yayın 4 Hz; ölçüme başlamadan önce iki saatin oturmasını bekle.
+     (İlk sürümde beklemeden ölçtüm ve yayının ilk paketi misafiri 0'a
+     çekti — testin kendi kurulum yarışıydı, koddaki hata değil.) */
+  const tw = Date.now();
+  while (Date.now() - tw < 700) { hostD.update(1 / 60); guestD.update(1 / 60); await sleep(6); }
+
+  /* --- Host sekmesi arka planda: rAF durdu, saat dondu --- */
+  hostD.playing = false;                 // rAF durdu
+  hostSession.holdScene(true);           // visibilitychange
+
+  const guestBefore = guestD.time;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 900) { guestD.update(1 / 60); await sleep(6); }
+
+  check('HOST SEKMESİ ARKA PLANDAYKEN MİSAFİRİN SAHNESİ DE BEKLİYOR',
+    Math.abs(guestD.time - guestBefore) < 0.35,
+    `misafir ${guestBefore.toFixed(2)} → ${guestD.time.toFixed(2)}`);
+  check('misafir donmuş saate kilitlenip geri sarmıyor',
+    guestD.time >= guestBefore - 0.05,
+    `${guestD.time.toFixed(2)} < ${guestBefore.toFixed(2)}`);
+
+  /* --- Sekmeye dönüldü --- */
+  hostD.playing = true;
+  hostSession.holdScene(false);
+  const t1 = Date.now();
+  while (Date.now() - t1 < 1200) { hostD.update(1 / 60); guestD.update(1 / 60); await sleep(6); }
+
+  check('sekmeye dönünce iki sahne de ilerliyor',
+    hostD.time > 4.3 && guestD.time > 4.3,
+    `host=${hostD.time.toFixed(2)} misafir=${guestD.time.toFixed(2)}`);
+  check('iki sahne senkron kaldı',
+    Math.abs(hostD.time - guestD.time) < 0.5,
+    `host=${hostD.time.toFixed(2)} misafir=${guestD.time.toFixed(2)}`);
+
+  /* --- Misafirin atlama isteği host'a gidiyor mu --- */
+  const beforeSkip = hostD.time;
+  guestSession.requestSkip();
+  const t2 = Date.now();
+  while (Date.now() - t2 < 700) { hostD.update(1 / 60); guestD.update(1 / 60); await sleep(6); }
+
+  check('MİSAFİRİN ATLA İSTEĞİ HOST\'TA UYGULANIYOR',
+    hostD.time > beforeSkip + 2, `${beforeSkip.toFixed(1)} → ${hostD.time.toFixed(1)}`);
+  check('atlama sonrası misafir de aynı yere geldi',
+    Math.abs(hostD.time - guestD.time) < 0.6,
+    `host=${hostD.time.toFixed(1)} misafir=${guestD.time.toFixed(1)}`);
+
+  hostSession.destroy(); guestSession.destroy();
+}
+
+/* ==========================================================================
+   10. EŞZAMANLI SAVAŞ
+
+   İki oyuncu aynı anda aynı düşmana vurduğunda ne oluyor? Vuruşlar
+   oyuncu başına `attackHitIds` ile sayılıyor; ortak olan şey düşmanın
+   canı. Aynı karede iki kez öldürülmemeli, ölüm sesi/ödül ikilenmemeli.
+   ========================================================================== */
+{
+  const hostNet = new FakeNet('host', 25), guestNet = new FakeNet('guest', 25);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+  const host = buildSide('host', hostNet), guest = buildSide('guest', guestNet);
+
+  /* Bölümü düşmanlarıyla birlikte yeniden kur.
+     İKİ TARAFTA da yüklemek şart: `buildSide` ölçüm gürültüsü için
+     düşmanları siliyor, sadece host'ta yüklersem misafir boş dünyayla
+     kalıyor ve test kendi kurulumunu ölçmüş oluyor. */
+  host.engine.loadLevel(0);
+  guest.engine.loadLevel(0);
+  await runRealtime([host, guest], 900);
+
+  const target = host.engine.entities.enemies[0];
+  check('savaş testi için düşman var', !!target, 'düşman yok');
+
+  if (target) {
+    const hp0 = target.hp ?? 1;
+    /* İki oyuncuyu da düşmanın üstüne koy ve aynı karede vurdur */
+    for (const p of host.engine.players) {
+      p.x = target.x - 4;
+      p.y = target.y - 6;
+      p.vy = 0;
+    }
+    const before = host.engine.entities.enemies.length;
+
+    for (const inp of [host.engine.inputs[0], host.engine.inputs[1]]) {
+      inp.attackHeld = true;
+      inp._attackBuffer = 0.13;
+      if (inp.presses) inp.presses.attack++;
+    }
+    await runRealtime([host, guest], 900);
+
+    const after = host.engine.entities.enemies.length;
+    check('iki oyuncu aynı anda vurunca düşman tek kez ölüyor',
+      before - after <= 1, `${before} → ${after}`);
+    check('düşman canı eksiye düşmüyor',
+      (target.hp ?? 0) >= 0, `hp=${target.hp} (başlangıç ${hp0})`);
+    check('eşzamanlı savaş iki dünyayı ayırmıyor',
+      host.engine.entities.enemies.length === guest.engine.entities.enemies.length ||
+      Math.abs(host.engine.entities.enemies.length - guest.engine.entities.enemies.length) <= 1,
+      `host=${host.engine.entities.enemies.length} misafir=${guest.engine.entities.enemies.length}`);
+  }
+
+  host.session.destroy(); guest.session.destroy();
+  host.engine.stop(); guest.engine.stop();
+}
+
+/* ==========================================================================
+   11. ÖLÜM → DİRİLİŞ
+
+   Ölüm host'un kararı; misafir onu anlık görüntüyle öğreniyor. Kritik
+   ayrıntı: doğuş noktası. Kontrol noktalarını yalnızca host çözüyor, bu
+   yüzden `spawnPoint` ağdan geçmezse misafir ölümden sonra kendi
+   karakterini BÖLÜM BAŞINA koyuyor, host ise son kontrol noktasına —
+   ve uzlaştırma karakteri bir uçtan bir uca savuruyordu.
+   ========================================================================== */
+{
+  const hostNet = new FakeNet('host', 25), guestNet = new FakeNet('guest', 25);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+  const host = buildSide('host', hostNet), guest = buildSide('guest', guestNet);
+
+  await runRealtime([host, guest], 500);
+
+  /* Host bir kontrol noktasına değdi */
+  host.engine.spawnPoint = { x: 1500, y: 300 };
+  await runRealtime([host, guest], 600);
+
+  check('DOĞUŞ NOKTASI MİSAFİRE GEÇİYOR',
+    Math.abs(guest.engine.spawnPoint.x - 1500) < 2 &&
+    Math.abs(guest.engine.spawnPoint.y - 300) < 2,
+    `misafir=${guest.engine.spawnPoint.x},${guest.engine.spawnPoint.y}`);
+
+  /* Ölüm */
+  host.engine.lives = 1;
+  host.engine._playerDies('damage');
+  check('host ölüm durumuna geçti', host.engine.state === 'dying', host.engine.state);
+
+  await runRealtime([host, guest], 900);
+  check('misafir de ölüm durumunu gördü',
+    ['dying', 'respawning', 'playing'].includes(guest.engine.state), guest.engine.state);
+
+  /* Diriliş tamamlansın */
+  await runRealtime([host, guest], 2600);
+
+  check('ölümden sonra iki taraf da oynanır durumda',
+    host.engine.state === 'playing' && guest.engine.state === 'playing',
+    `host=${host.engine.state} misafir=${guest.engine.state}`);
+
+  const gap = Math.hypot(
+    host.engine.players[1].x - guest.engine.players[1].x,
+    host.engine.players[1].y - guest.engine.players[1].y);
+  check('dirilişten sonra misafirin karakteri host ile aynı yerde',
+    gap < 80, `${gap.toFixed(0)}px fark`);
+
+  /* Ve tekrar oynanabiliyor */
+  const gi = guest.engine.inputs[1];
+  gi.right = true;
+  const x0 = host.engine.players[1].x;
+  await runRealtime([host, guest], 1200);
+  gi.right = false;
+  check('DİRİLİŞTEN SONRA MİSAFİR YİNE HAREKET EDEBİLİYOR',
+    host.engine.players[1].x - x0 > 40,
+    `${(host.engine.players[1].x - x0).toFixed(0)}px`);
+
+  host.session.destroy(); guest.session.destroy();
+  host.engine.stop(); guest.engine.stop();
+}
+
+/* ==========================================================================
+   12. BAĞLANTI TİTREMESİ — kendi soketimiz koptuğunda
+
+   Ölçülen hata: tek bir "peerOnline" bayrağı vardı ve KENDİ soketimiz
+   koptuğunda da "yoldaşın bağlantısı koptu" deniyordu. Geri geldiğimizde
+   onu tekrar açacak bir şey yoktu — sunucu "rejoined" olayını karşı tarafa
+   yolluyor, bize değil. Bağlantısı bir saniye titreyen oyuncu sonsuza dek
+   duraklamış ekranda kalıyordu.
+   ========================================================================== */
+{
+  const hostNet = new FakeNet('host', 25), guestNet = new FakeNet('guest', 25);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+  const host = buildSide('host', hostNet), guest = buildSide('guest', guestNet);
+
+  await runRealtime([host, guest], 500);
+  check('başlangıçta oyun akıyor', guest.engine.state === 'playing', guest.engine.state);
+
+  /* Misafirin KENDİ bağlantısı titriyor */
+  guestNet._deliver('status', { status: 'reconnecting' });
+  await runRealtime([host, guest], 300);
+  check('kendi bağlantısı kopunca oyun duruyor',
+    guest.engine.state === 'paused', guest.engine.state);
+  check('sebep doğru bildiriliyor (yoldaş değil, kendi hattı)',
+    guest.session.selfOnline === false && guest.session.peerOnline === true,
+    `self=${guest.session.selfOnline} peer=${guest.session.peerOnline}`);
+
+  /* Geri geldi */
+  guestNet._deliver('status', { status: 'online' });
+  await runRealtime([host, guest], 500);
+  check('KENDİ BAĞLANTISI DÖNÜNCE OYUN DEVAM EDİYOR',
+    guest.engine.state === 'playing', guest.engine.state);
+
+  /* Ve gerçekten oynanabiliyor */
+  const gi = guest.engine.inputs[1];
+  gi.right = true;
+  const x0 = host.engine.players[1].x;
+  await runRealtime([host, guest], 1000);
+  gi.right = false;
+  check('bağlantı döndükten sonra misafir yine hareket ediyor',
+    host.engine.players[1].x - x0 > 40,
+    `${(host.engine.players[1].x - x0).toFixed(0)}px`);
+
+  /* Salon özeti yoldaşın gerçek durumunu taşımalı */
+  guestNet._deliver(MSG.LOBBY, { lobby: { host: { connected: false }, guest: { connected: true } } });
+  await runRealtime([host, guest], 300);
+  check('salon özeti yoldaşın kopukluğunu bildiriyor',
+    guest.session.peerOnline === false, `peer=${guest.session.peerOnline}`);
+
+  guestNet._deliver(MSG.LOBBY, { lobby: { host: { connected: true }, guest: { connected: true } } });
+  await runRealtime([host, guest], 400);
+  check('salon özeti yoldaş dönünce oyunu açıyor',
+    guest.engine.state === 'playing' && guest.session.peerOnline === true,
+    `${guest.engine.state} peer=${guest.session.peerOnline}`);
+
+  host.session.destroy(); guest.session.destroy();
+  host.engine.stop(); guest.engine.stop();
+}
+
+/* ==========================================================================
    Rapor
    ========================================================================== */
 console.log('\n=== CO-OP ENTEGRASYON TESTİ ===');

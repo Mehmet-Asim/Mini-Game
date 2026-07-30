@@ -224,6 +224,97 @@ try {
   }
 
   /* ====================================================================
+     2b. MİSAFİRİN EYLEMLERİ — ok ve kılıç
+
+     "Ok atamıyor" şikâyeti. Ok, yetkili dünyada host tarafından
+     yaratılıyor; misafirin BASIŞ KENARI (`shootEdge`) host'a ulaşmazsa
+     ok hiç var olmuyor. Basış sayaçları tam da bunun için var
+     (bkz. Input.presses) ve şimdiye kadar uçtan uca sınanmamıştı.
+     ==================================================================== */
+  {
+    host.engine.entities.arrows.length = 0;
+    const gi2 = guest.engine.inputs[1];
+
+    /* Klavyedeki keydown ne yapıyorsa aynısı */
+    gi2.shootHeld = true;
+    gi2._shootBuffer = 0.13;
+    gi2.presses.shoot++;
+    await runRealtime([host, guest], 500);
+    gi2.shootHeld = false;
+    await runRealtime([host, guest], 700);
+
+    const mine = host.engine.entities.arrows.filter(a => a.ownerIndex === 1);
+    check('MİSAFİR OK ATABİLİYOR (host\'un dünyasında ok var)',
+      mine.length > 0, `${host.engine.entities.arrows.length} ok, misafirinki 0`);
+    check('ok misafirin ekranına da geliyor',
+      guest.engine.entities.arrows.length > 0,
+      `${guest.engine.entities.arrows.length} ok`);
+
+    /* Kılıç — saldırı zamanlayıcısı yarım saniyede sönüyor, bu yüzden
+       sonunda bakmak yerine PENCERE BOYUNCA örnekliyoruz. (İlk sürümde
+       sonunda baktım ve 0 gördüm: kodda değil ölçümde hata vardı.) */
+    gi2.attackHeld = true;
+    gi2._attackBuffer = 0.13;
+    gi2.presses.attack++;
+    let sawAttack = false;
+    await runRealtime([host, guest], 900, () => {
+      const p = host.engine.players[1];
+      if ((p.attackTimer ?? 0) > 0 || p.state === 'attack') sawAttack = true;
+    });
+    gi2.attackHeld = false;
+    check('misafirin kılıcı host tarafında işleniyor', sawAttack, 'hiç saldırı görülmedi');
+  }
+
+  /* ====================================================================
+     2c. DÜŞMANLAR MİSAFİRİN EKRANINDA HAREKET EDİYOR MU
+
+     Düşman yapay zekâsı yalnızca host'ta koşuyor; konumları anlık
+     görüntüyle gidiyor. Misafirin ekranında donuk kalıp kalmadıklarını
+     şimdiye kadar canlı hatta hiç ölçmemiştim.
+     ==================================================================== */
+  {
+    host.engine.loadLevel(0);
+    guest.engine.loadLevel(0);
+    await runRealtime([host, guest], 900);
+
+    const hostEnemies = host.engine.entities.enemies.length;
+    const before = guest.engine.entities.enemies.map(e => ({ id: e.id, x: e.x, y: e.y }));
+    await runRealtime([host, guest], 1500);
+
+    const moved = guest.engine.entities.enemies.filter(e => {
+      const b = before.find(o => o.id === e.id);
+      return b && (Math.abs(e.x - b.x) > 2 || Math.abs(e.y - b.y) > 2);
+    }).length;
+
+    check('bölümde düşman var (test anlamlı)', hostEnemies > 0, `${hostEnemies} düşman`);
+    check('DÜŞMANLAR MİSAFİRİN EKRANINDA HAREKET EDİYOR',
+      moved > 0, `${before.length} düşmandan ${moved} tanesi kımıldadı`);
+
+    /* Kimlikler eşleşiyor mu — global sayaçtan gelirken iki taraf farklı
+       sayıda yükleme yapınca kayıyordu ve misafirin düşmanları kalıcı
+       olarak siliniyordu. */
+    const hostIds = host.engine.entities.enemies.map(e => e.id).sort().join(',');
+    const guestIds = guest.engine.entities.enemies.map(e => e.id).sort().join(',');
+    check('DÜŞMAN KİMLİKLERİ İKİ TARAFTA AYNI',
+      hostIds === guestIds && hostIds.length > 0,
+      `host=[${hostIds}] misafir=[${guestIds}]`);
+
+    /* Konumlar iki dünyada da örtüşüyor mu.
+       (Eşleşen düşman yoksa bu kontrol kendini doğrular; o yüzden
+       eşleşme sayısını da şart koşuyoruz.) */
+    let maxGap = 0, matched = 0;
+    for (const he of host.engine.entities.enemies) {
+      const ge = guest.engine.entities.enemies.find(e => e.id === he.id);
+      if (!ge) continue;
+      matched++;
+      maxGap = Math.max(maxGap, Math.hypot(he.x - ge.x, he.y - ge.y));
+    }
+    check('düşman konumları iki ekranda örtüşüyor',
+      matched === hostEnemies && maxGap < 60,
+      `${matched}/${hostEnemies} eşleşti, en büyük fark ${maxGap.toFixed(0)}px`);
+  }
+
+  /* ====================================================================
      3. Anlık görüntü ters yönde akıyor mu
      ==================================================================== */
   const hi = host.engine.inputs[0];

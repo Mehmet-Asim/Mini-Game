@@ -203,6 +203,25 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     const phase = Math.floor(f / 40) % 2;
     gi.right = reckless ? true : phase === 0;
     gi.left = reckless ? false : phase === 1;
+
+    /* --------------------------------------------------------------------
+       Ölümü ŞANSA BIRAKMA.
+
+       `reckless` senaryosu yoldaşın uçuruma koşup ölmesine güveniyordu.
+       Ama düşmanların başlangıç animasyon fazı rastgele; bazen yoldaşı
+       erken durduruyor, bazen hiç düşmüyor ve "ölüm yaşandı" kontrolü
+       koşuların dörtte birinde başarısız oluyordu. Testin kendi kurulumu
+       kararsızdı, üründe bir sorun yoktu.
+
+       Sabit bir karede karakteri doğrudan ölüm bölgesine bırakıyoruz:
+       ışınlanma her koşuda kesin gerçekleşiyor ve asıl ölçülmek istenen
+       şey (dirilişin interpole edilip edilmediği) her seferinde
+       sınanabiliyor. */
+    if (reckless && f === Math.round(frames * 0.45)) {
+      const p = host.players[1];
+      p.y = host.level.deathY + 40;
+      p.vy = 0;
+    }
     const wantJump = f % 45 === 0;
     if (wantJump) { gi.jumpHeld = true; gi._jumpBuffer = 0.13; gi.presses.jump++; }
     else if (f % 45 === 12) gi.jumpHeld = false;

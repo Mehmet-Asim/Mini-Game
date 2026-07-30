@@ -151,7 +151,13 @@ function navigateTo(view) {
           session = new CoopSession(net, {
             onPeerState: (online) => {
               if (!online) showNetOverlay('Yoldaşının bağlantısı koptu — bekleniyor...');
-              else hideNetOverlay();
+              else if (session?.selfOnline) hideNetOverlay();
+            },
+            /* Kendi bağlantımız için ayrı mesaj: "yoldaşın koptu" demek
+               oyuncuyu yanlış yere baktırıyordu. */
+            onSelfState: (online) => {
+              if (!online) showNetOverlay('Bağlantın koptu — yeniden bağlanılıyor...');
+              else if (session?.peerOnline) hideNetOverlay();
             },
             /* Yoldaş duraklattığında ekran sebepsiz donmasın. Sessiz donma,
                oyuncuya "oyun bozuldu" hissi veriyordu. */
@@ -201,14 +207,24 @@ function navigateTo(view) {
         sceneId,
         config: getCinematicConfig(),
         canChoose,
-        /* Ağ oyununda atlama yetkisi host'ta; iki taraf ayrı ayrı
-           atlarsa sahneler ayrışır. */
-        showSkip: !session || session.isHost,
+        /* Atlama butonu İKİ TARAFTA da var. Zamanı yöneten host olduğu
+           için misafirin butonu doğrudan atlamıyor, host'a istek yolluyor;
+           host atlayınca yeni zaman normal senkronla misafire dönüyor.
+           Böylece sahneler ayrışmıyor ama karşı taraf da çaresiz
+           beklemek zorunda kalmıyor. */
+        showSkip: true,
+        onSkipRequest: session && !session.isHost
+          ? () => session.requestSkip()
+          : null,
+        /* Sekme arka plana düşünce iki taraf da bekler */
+        onHold: (held) => session?.holdScene(held),
         onChoice: (id) => session?.sendChoice(id),
         onEnd: () => afterCinematic(sceneId, null),
         onSceneChange: (nextId, choice) => afterCinematic(sceneId, nextId, choice)
       });
-      session?.attachDirector(ctrl.director);
+      session?.attachDirector(ctrl.director, {
+        onHold: (held) => ctrl.setNetHold(held)
+      });
 
       /* Host, misafirin cevabını ağdan alıp KENDİ yönetmenine uygular.
          Yoksa host'un sahnesi seçim ekranında sonsuza dek beklerdi:

@@ -107,6 +107,17 @@ export function serializeSnapshot(eng, tick) {
     oc: packCollected(e.lifeOrbs),
     sc: e.shieldPickup && e.shieldPickup.collected ? 1 : 0,
 
+    /* --- Kontrol noktası ve doğuş yeri ---
+       Kontrol noktalarını host çözüyor; misafir o kodu hiç çalıştırmıyor.
+       Bu iki alan gitmezse misafirin `spawnPoint`'i BÖLÜM BAŞINDA kalıyor
+       ve ölümden sonra kendi karakterini bölümün başına ışınlıyor. Host
+       ise son kontrol noktasına koyuyor. Aradaki fark uzlaştırmayı sert
+       düzeltmeye zorluyor: diriliş anında karakter bir uçtan bir uca
+       savruluyordu. Ayrıca misafirin ekranında kontrol noktaları hiç
+       yanmıyordu. */
+    cs: packActivated(e.checkpoints),
+    sp: [r1(eng.spawnPoint.x), r1(eng.spawnPoint.y)],
+
     /* Co-op mekanizmaları */
     pl: e.plates.map(p => (p.active ? 1 : 0) | (p.locked ? 2 : 0)),
     ga: e.gates.map(g => r2(g.open) + (g.latched ? 1000 : 0)),
@@ -201,6 +212,18 @@ function packCollected(list) {
   return bits;
 }
 
+function packActivated(list) {
+  let bits = 0;
+  for (let i = 0; i < list.length && i < 31; i++) if (list[i].activated) bits |= (1 << i);
+  return bits;
+}
+
+function applyActivated(list, bits) {
+  for (let i = 0; i < list.length && i < 31; i++) {
+    if ((bits & (1 << i)) && !list[i].activated) list[i].activate?.();
+  }
+}
+
 function applyCollected(list, bits) {
   for (let i = 0; i < list.length && i < 31; i++) {
     const should = !!(bits & (1 << i));
@@ -220,17 +243,43 @@ function applyCollected(list, bits) {
 export function applySnapshot(eng, snap, localIndex = 1) {
   if (!snap) return;
 
-  /* --- Bölüm (yeniden) yükleme — HOST'UN KARARI ---
-     Canlar bitip bölüm baştan başladığında toplanan kalpler geri gelir.
-     Ağda toplanma bilgisi yalnızca "toplandı" yönünde taşınıyor (bit
-     maskesi hiçbir zaman geri alınmıyor), dolayısıyla bu sinyal olmadan
-     misafir kalpsiz, kalkansız bir bölümde dolaşıyordu. */
+  /* --- DÜNYA KUŞAĞI (`rs`) — bölüm yükleme host'un kararı ---
+
+     `rs` host'un kaçıncı kez bölüm yüklediğini sayar. Misafir kendi
+     sayacını TUTMAZ; tek yetkili bu sayı.
+
+     İki ayrı hata buna bağlıydı:
+
+     1. Canlar bitip bölüm baştan başladığında toplanan kalpler geri gelir.
+        Ağda toplanma bilgisi yalnızca "toplandı" yönünde taşınıyor, bu
+        sinyal olmadan misafir kalpsiz bir bölümde dolaşıyordu.
+
+     2. BAYAT PAKET DÜŞMANLARI SİLİYORDU. Tampon 100 ms geçmişi oynatıyor;
+        bölüm değişiminde eski dünyaya ait paketler hâlâ içeride. O
+        paketlerde yeni bölümün düşmanları yok, `applySnapshot` da
+        "listede yoksa ölmüştür" diyerek hepsini siliyordu. Silinen düşman
+        bir daha geri gelmiyor (bu fonksiyon düşman YARATAMAZ, yalnızca
+        günceller) — misafir bomboş bir bölümde kalıyordu.
+
+     Bu yüzden karşılaştırma EŞİTLİK değil SIRA: eski kuşak atılır, yeni
+     kuşak bölümü yükletir. */
   if (snap.rs !== undefined) {
-    if (eng._netLoadSerial === undefined) eng._netLoadSerial = snap.rs;
-    else if (snap.rs !== eng._netLoadSerial) {
+    if (eng._netLoadSerial === undefined) {
+      /* İlk paket: mevcut dünyayı kabul et — AMA bölüm aynı değilse yükle.
+         Oyun ortasında yeniden bağlanan misafir host'un bulunduğu bölümde
+         olmayabiliyor; sayacı sorgusuz benimserse bir daha hiç yüklemiyor
+         ve yanlış bölümde, düşmansız takılı kalıyordu. */
+      eng._netLoadSerial = snap.rs;
+      if (snap.li !== undefined && snap.li !== eng.levelIndex) {
+        eng.loadLevel(snap.li);
+        return;
+      }
+    } else if (snap.rs < eng._netLoadSerial) {
+      return;                                // geçmiş bir dünyaya ait — yoksay
+    } else if (snap.rs > eng._netLoadSerial) {
+      eng._netLoadSerial = snap.rs;
       eng.loadLevel(snap.li ?? eng.levelIndex);
-      eng._netLoadSerial = snap.rs;     // yerel sayımdan bağımsız, host'a kilitle
-      return;                            // bu paket artık eski dünyaya ait
+      return;                                // taze bölüm; sonraki paket doldurur
     }
   }
 
@@ -339,6 +388,10 @@ export function applySnapshot(eng, snap, localIndex = 1) {
   applyCollected(e.hearts, snap.hc);
   applyCollected(e.lifeOrbs, snap.oc);
   if (snap.sc && e.shieldPickup) e.shieldPickup.collected = true;
+
+  /* --- Kontrol noktası + doğuş yeri (host'un kararı) --- */
+  if (snap.cs !== undefined) applyActivated(e.checkpoints, snap.cs);
+  if (snap.sp) { eng.spawnPoint.x = snap.sp[0]; eng.spawnPoint.y = snap.sp[1]; }
 
   /* --- Co-op mekanizmaları --- */
   e.plates.forEach((p, i) => {

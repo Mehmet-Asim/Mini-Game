@@ -1382,11 +1382,31 @@ kbd {
   color: var(--text-dim);
   font-size: 0.72rem; letter-spacing: 2px; text-transform: uppercase;
   cursor: pointer;
-  opacity: 0.5;
+  /* 0.5'ti — koyu sahnenin üstünde soluk gri metin neredeyse görünmüyordu
+     ve oyuncular butonun varlığını fark etmiyordu. */
+  opacity: 0.85;
   transition: opacity 0.3s, color 0.3s, border-color 0.3s;
 }
 .cine-skip svg { width: 13px; height: 13px; }
 .cine-skip:hover { opacity: 1; color: var(--gold); border-color: var(--line-strong); }
+
+/* Karşı taraf beklerken sahne durur — sebebini göster, sessizce donma */
+.cine-frame.is-held::after {
+  content: 'Yoldaşın bekleniyor...';
+  position: absolute;
+  left: 50%; bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 30;
+  padding: 9px 18px;
+  border: 2px solid var(--line-strong);
+  background: rgba(6, 8, 14, 0.82);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.55);
+  color: var(--text-gold, #d4a853);
+  font-size: 0.72rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  pointer-events: none;
+}
 
 .cine-progress {
   position: absolute; left: 0; right: 0; bottom: 0;

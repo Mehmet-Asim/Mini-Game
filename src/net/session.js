@@ -22,8 +22,9 @@ import { unpackInput } from '../../server/protocol.js';
 import { serializeSnapshot, applySnapshot, reconcileLocal, SnapshotBuffer } from './snapshot.js';
 
 export class CoopSession {
-  constructor(net, { onPeerState, onNetPause } = {}) {
+  constructor(net, { onPeerState, onNetPause, onSelfState } = {}) {
     this.net = net;
+    this.onSelfState = onSelfState;
     /* Host duraklattığı için mi duruyoruz? Misafire sebebini söylemek
        şart: sebepsiz donan ekran "oyun bozuldu" gibi hissettiriyor. */
     this.onNetPause = onNetPause;
@@ -46,6 +47,7 @@ export class CoopSession {
     this._lastBits = [];
 
     this.peerOnline = true;
+    this.selfOnline = net.status ? net.status === 'online' : true;
     this.lastSnapshotAt = 0;
     this.stats = { sent: 0, received: 0, bytes: 0, drift: 0 };
     this.phase = null;
@@ -81,9 +83,14 @@ export class CoopSession {
     this.engine = null;
   }
 
-  /** Sinematik yönetmenini bağla — sahne saati senkronu için */
-  attachDirector(director) {
+  /**
+   * Sinematik yönetmenini bağla — sahne saati senkronu için.
+   * @param opts.onHold(v)  karşı taraf sahneyi beklettiğinde çağrılır
+   */
+  attachDirector(director, { onHold } = {}) {
     this.director = director;
+    this.onSceneHold = onHold;
+    this.sceneHold = false;
     this._clearTimer('scene');
     if (this.isHost && director) {
       const sid = director.scene?.id || '';
@@ -96,11 +103,34 @@ export class CoopSession {
           id: this.director.scene.id,
           time: Math.round(this.director.time * 1000) / 1000,
           waiting: this.director.awaitingChoice ? 1 : 0,
+          /* "Saatim durdu, bana uyma" bayrağı. Sekme arka plana düşünce
+             tarayıcı rAF'i durduruyor ama bu setInterval çalışmaya devam
+             ediyor — yani host DONMUŞ bir saati yayınlamayı sürdürüyordu.
+             Misafir ona kilitlenince sahne geri sarıyor, takılıyor ve
+             başa dönüyordu. */
+          hold: this.sceneHold ? 1 : 0,
           phase: this.phase || undefined,
           levelIndex: this.levelIndex
         });
       });
     }
+  }
+
+  /**
+   * Bu sekme sahneyi beklettiğini (ya da devam ettiğini) karşı tarafa
+   * bildirir. Sinematik ortak bir an; biri sekmeden çıkınca diğeri tek
+   * başına izlemeye devam etmemeli.
+   */
+  holdScene(v) {
+    const on = !!v;
+    if (this.isHost) this.sceneHold = on;   // sonraki yayında gider
+    else this.sendHalt(on);
+  }
+
+  /** Misafirin atlama isteği — zamanı host yönetiyor, kararı o uygular. */
+  requestSkip() {
+    if (this.isHost) return false;
+    return this.net.send(MSG.SCENE, { skip: 1 });
   }
 
   /**
@@ -159,10 +189,23 @@ export class CoopSession {
 
     /* Sahne saati → misafirin yönetmenine */
     this._offs.push(this.net.on(MSG.SCENE, (m) => {
-      if (this.isHost || !this.director) return;
+      if (this.isHost) {
+        /* Misafir "atla" dedi. Zamanı host yönetiyor; atlamayı o yapar ve
+           yeni zaman normal yayınla misafire geri döner. İki taraf ayrı
+           ayrı atlarsa sahneler ayrışıyor. */
+        if (m.skip && this.director) this.director.skip();
+        return;
+      }
+      if (!this.director) return;
       if (m.id && this.director.scene.id !== m.id) return;   // sahne değişimi ayrı yolla gelir
       if (m.phase) this.phase = m.phase;
       if (m.levelIndex !== undefined) this.levelIndex = m.levelIndex;
+
+      /* Host beklettiyse SAATİNE UYMA — donmuş bir saate kilitlenmek
+         sahneyi geri sarıyor. Bunun yerine biz de bekliyoruz. */
+      this.onSceneHold?.(!!m.hold);
+      if (m.hold) return;
+
       this.director.syncTo(m.time, 0.2, !!m.waiting);
     }));
 
@@ -174,32 +217,73 @@ export class CoopSession {
        karakteri sahada savunmasız kalıyor ve ORTAK candan kaybettiriyordu.
        -------------------------------------------------------------------- */
     this._offs.push(this.net.on(MSG.HALT, (m) => {
-      if (!this.isHost || !this.engine) return;
-      if (m.on) this.engine.pause('net');
-      else this.engine.resume('net');
+      if (!this.isHost) return;
+      if (this.engine) {
+        if (m.on) this.engine.pause('net');
+        else this.engine.resume('net');
+      }
+      /* Sinematik sırasında motor yok; beklemeyi yönetmene uygula.
+         `sceneHold` bir sonraki yayında misafire de gider, böylece iki
+         taraf da aynı yerde bekler. */
+      if (this.director) {
+        this.sceneHold = !!m.on;
+        this.onSceneHold?.(!!m.on);
+      }
     }));
 
-    /* Bağlantı durumu */
+    /* --------------------------------------------------------------------
+       Bağlantı durumu — İKİ AYRI ŞEY
+
+       Eskiden tek bir bayrak vardı ve KENDİ soketimiz koptuğunda da
+       "yoldaşın bağlantısı koptu" deniyordu. Geri geldiğimizde ise onu
+       tekrar açacak bir şey yoktu: sunucu "rejoined" olayını KARŞI tarafa
+       yolluyor, bize değil. Sonuç, kendi bağlantısı bir saniye titreyen
+       oyuncunun sonsuza dek duraklamış bir ekranda kalmasıydı.
+
+       Artık ikisi ayrı: yoldaşın varlığı ve bizim soketimiz. Oyun
+       ikisinden biri kopukken duruyor, ikisi de geri gelince açılıyor.
+       -------------------------------------------------------------------- */
     this._offs.push(this.net.on(MSG.PEER, (m) => {
       if (m.event === 'dropped' || m.event === 'left') this._setPeerOnline(false);
       if (m.event === 'rejoined' || m.event === 'joined') this._setPeerOnline(true);
     }));
 
+    /* Salon özeti yoldaşın gerçek durumunu taşıyor ve yeniden bağlanınca
+       da geliyor. PEER olaylarını kaçırsak bile doğruyu buradan alıyoruz. */
+    this._offs.push(this.net.on(MSG.LOBBY, (m) => {
+      const lobby = m.lobby;
+      if (!lobby) return;
+      const peer = this.isHost ? lobby.guest : lobby.host;
+      this._setPeerOnline(!!(peer && peer.connected));
+    }));
+
     this._offs.push(this.net.on('status', ({ status }) => {
-      if (status !== 'online') this._setPeerOnline(false);
+      this._setSelfOnline(status === 'online');
     }));
   }
 
   _setPeerOnline(v) {
     if (this.peerOnline === v) return;
     this.peerOnline = v;
-    /* Yoldaş düştüğünde oyunu duraklat — tek başına devam etmek anlamsız,
-       kapıların yarısı iki kişi istiyor. */
-    if (this.engine) {
-      if (!v) this.engine.pause('net');
-      else this.engine.resume('net');
-    }
+    this._applyLink();
     this.onPeerState?.(v);
+  }
+
+  _setSelfOnline(v) {
+    if (this.selfOnline === v) return;
+    this.selfOnline = v;
+    this._applyLink();
+    /* Kendi bağlantımız için ayrı mesaj — "yoldaşın koptu" demek yanlış
+       ve oyuncuyu yanlış yere baktırıyor. */
+    this.onSelfState?.(v);
+  }
+
+  /** Hat sağlamsa oyun döner; iki uçtan biri kopuksa durur. */
+  _applyLink() {
+    if (!this.engine) return;
+    const ok = this.peerOnline && this.selfOnline;
+    if (ok) this.engine.resume('net');
+    else this.engine.pause('net');
   }
 
   /* ---------- Host: anlık görüntü yayını ---------- */
@@ -318,6 +402,11 @@ export class CoopSession {
     }
 
     if (eng.state === 'paused') {
+      /* Hat kopukken anlık görüntü oyunu AÇMAMALI. Host'un "ben
+         oynuyorum" demesi, bizim soketimizin ya da yoldaşın düşmüş
+         olduğu gerçeğini değiştirmiyor; açarsak oyuncu kopuk bir hatta
+         tek başına oynamaya başlıyor. */
+      if (!this.peerOnline || !this.selfOnline) return;
       eng.resume('net');                     // yerel duraklama kendini korur
       if (eng.state === 'paused') return;    // hâlâ duruyorsa sahibi misafir
       this.onNetPause?.(false);
