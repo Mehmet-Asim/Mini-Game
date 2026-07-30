@@ -101,15 +101,14 @@ export function renderLobbyView(container, { net, onStart, onCancel }) {
 
   el.copy?.addEventListener('click', async () => {
     if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      el.copy.querySelector('span').textContent = 'Kopyalandı!';
-    } catch {
-      /* Clipboard API https olmadan çalışmaz — kullanıcı elle seçsin */
-      el.copy.querySelector('span').textContent = 'Linki elle kopyala';
-      selectText(el.link);
-    }
-    setTimeout(() => { el.copy.querySelector('span').textContent = 'Daveti Kopyala'; }, 2200);
+    const ok = await copyText(inviteUrl, el.link);
+    el.copy.querySelector('span').textContent = ok ? 'Kopyalandı!' : 'KOPYALANAMADI — elle kopyala';
+    el.copy.classList.toggle('is-warn', !ok);
+    if (!ok) flash('Tarayıcı kopyalamaya izin vermedi (https gerekiyor). Link seçildi, Ctrl+C ile kopyala.', true);
+    setTimeout(() => {
+      el.copy.querySelector('span').textContent = 'Daveti Kopyala';
+      el.copy.classList.remove('is-warn');
+    }, ok ? 2200 : 6000);
   });
 
   /* ---------- Koltuk durumu ---------- */
@@ -230,6 +229,44 @@ export function renderLobbyView(container, { net, onStart, onCancel }) {
     clearInterval(rttTimer);
     clearTimeout(flashTimer);
   };
+}
+
+/* --------------------------------------------------------------------------
+   Panoya kopyala — üç kademeli
+
+   `navigator.clipboard` YALNIZCA güvenli bağlamda (https ya da localhost)
+   vardır. Sunucuya http://IP:PORT ile bakıldığında tanımsızdır ve
+   `navigator.clipboard.writeText` bir TypeError atar.
+
+   Eski kod bunu sessizce yutuyordu: buton "Linki elle kopyala" yazıyor ama
+   PANO DEĞİŞMİYORDU. Kullanıcı kopyaladığını sanıp yapıştırınca panosunda
+   ne varsa o açılıyordu — çoğu zaman daha önce kopyaladığı `#setup`
+   adresi. "Daveti kopyalayınca kurulum ekranına atıyor" şikâyeti buydu.
+
+   Artık: Clipboard API → execCommand → metni seç + açıkça uyar.
+   -------------------------------------------------------------------------- */
+export async function copyText(text, fallbackNode) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch { /* aşağıdaki yönteme düş */ }
+  }
+
+  /* Güvensiz bağlamda çalışan eski yöntem */
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (ok) return true;
+  } catch { /* son çareye düş */ }
+
+  if (fallbackNode) selectText(fallbackNode);
+  return false;
 }
 
 function selectText(node) {

@@ -135,12 +135,15 @@ export function renderSetupView(container, { onRoomCreated } = {}) {
     linkResult.style.display = 'block';
   }
 
-  btnCopy.addEventListener('click', () => {
+  /* Kopyalama güvensiz bağlamda (http://IP) sessizce başarısız oluyordu;
+     kullanıcı kopyaladığını sanıp panosundaki ESKİ adresi yapıştırıyordu.
+     Ortak `copyText` üç kademeli deniyor ve başarısızlığı açıkça söylüyor. */
+  btnCopy.addEventListener('click', async () => {
     if (!fallbackUrl) return;
-    navigator.clipboard.writeText(fallbackUrl).then(() => {
-      btnCopy.querySelector('span').textContent = 'Kopyalandı!';
-      setTimeout(() => { btnCopy.querySelector('span').textContent = 'Kopyala'; }, 2000);
-    }).catch(() => { btnCopy.querySelector('span').textContent = 'Elle kopyala'; });
+    const { copyText } = await import('./lobbyView.js');
+    const ok = await copyText(fallbackUrl, linkEl);
+    btnCopy.querySelector('span').textContent = ok ? 'Kopyalandı!' : 'Elle kopyala (seçildi)';
+    setTimeout(() => { btnCopy.querySelector('span').textContent = 'Kopyala'; }, ok ? 2000 : 5000);
   });
 
   btnTest.addEventListener('click', () => { if (fallbackUrl) location.href = fallbackUrl; });

@@ -1562,3 +1562,10 @@ kbd {
 
 .net-debug-row.is-ok  span { color: #6ee7a0; }
 .net-debug-row.is-bad span { color: #ff7f92; font-weight: 700; }
+
+/* Kopyalama başarısız olduğunda buton sessiz kalmasın */
+.btn-primary.is-warn {
+  border-color: var(--crimson, #c41e3a);
+  color: #ff9fb0;
+  background: rgba(196, 30, 58, 0.12);
+}
