@@ -288,5 +288,7 @@ export function renderCinematicView(container, opts = {}) {
   cleanup.submitChoice = (id) => director.submitChoice(id);
   /** Karşı taraf bekletti / devam etti */
   cleanup.setNetHold = (v) => { netHold = !!v; applyHold(); };
+  /** Karşı taraf sahneyi bitirdi — biz de kapatalım (co-op senkronu) */
+  cleanup.finish = () => director.finish();
   return cleanup;
 }

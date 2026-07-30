@@ -5,9 +5,13 @@
 
 const JUMP_BUFFER_TIME = 0.13; // saniye
 
-/* Ağ girdisi kuyruğunun üst sınırı. ~8 kare = 130 ms tampon; üstü
-   gecikmeyi büyütmekten başka işe yaramıyor. */
-const MAX_INPUT_QUEUE = 12;
+/* Ağ girdisi kuyruğunun üst sınırı.
+   12'ydi ve DAR geliyordu: taşan kuyrukta en eski girdi atılıyor, host onu
+   hiç işlemiyor, misafir işliyor ve iki dünya kalıcı olarak ayrılıyordu.
+   Sonuç sert düzeltme, yani "ışınlanma". 30 kare (~0,5 sn) geçici
+   dalgalanmayı yutmaya yetiyor; buraya kadar dolması zaten gerçek bir ağ
+   sorunu demek. */
+const MAX_INPUT_QUEUE = 30;
 
 /* Tüketime başlamadan önce biriktirilecek girdi sayısı — dalgalanma tamponu.
    3 kare ≈ 50 ms; ağ dalgalanmasını yutmaya yetiyor, gecikmesi fark edilmiyor. */

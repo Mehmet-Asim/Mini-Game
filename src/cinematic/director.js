@@ -152,6 +152,24 @@ export class Director {
     if (this.onEnd) this.onEnd({ choice: this.choiceMade, next: this.scene.next, skipped: true });
   }
 
+  /**
+   * Sahneyi zorla bitir — çünkü KARŞI TARAF bitirdi (co-op senkronu).
+   *
+   * Host atladığında sahnesi anında bitiyor ve sahne saati yayını
+   * kesiliyor. Misafir yeni zamanı hiç öğrenemediği için kalan süreyi tek
+   * başına izliyordu: "ilk oyuncu atlıyor, ikincisi baştan izliyor".
+   *
+   * Cevapsız bir teklif varken ASLA bitmez. Teklif bu oyunun tek amacı;
+   * karşı taraf cevap vermeden sahnenin kapanması kabul edilemez.
+   */
+  finish() {
+    if (this.ended) return;
+    if (this.scene.choice && !this.choiceMade) return;
+    this.time = this.duration;
+    this.ended = true;
+    if (this.onEnd) this.onEnd({ choice: this.choiceMade, next: this.scene.next, forced: true });
+  }
+
   /** Seçim kartlarından cevap geldi */
   submitChoice(id) {
     if (!this.awaitingChoice) return;

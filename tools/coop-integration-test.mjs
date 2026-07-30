@@ -855,6 +855,83 @@ async function runRealtime(sides, ms, onTick) {
 }
 
 /* ==========================================================================
+   13. HOST ATLAYINCA MİSAFİR DE ATLAR
+
+   Ölçülen hata: `skip()` sahneyi ANINDA bitiriyor ve 4 Hz'lik saat yayını
+   kesiliyor. Misafir yeni zamanı hiç öğrenemediği için intro'yu baştan
+   izlemeye devam ediyor, kendi "atla" tuşu da karşılıksız kalıyordu
+   (host'un yönetmeni artık yok).
+
+   Çözüm: host sahneden çıkarken `done: 1` yolluyor, misafir de kapatıyor.
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'a', targetName: 'b', proposalText: 'Soru?' };
+
+  const hostNet = new FakeNet('host', 25), guestNet = new FakeNet('guest', 25);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const hostSession = new CoopSession(hostNet, {});
+  const guestSession = new CoopSession(guestNet, {});
+
+  let hostEnded = false, guestEnded = false;
+  const hostD = new Director(SCENES['intro'], { config, onEnd: () => { hostEnded = true; } });
+  const guestD = new Director(SCENES['intro'], { config, onEnd: () => { guestEnded = true; } });
+
+  hostSession.attachDirector(hostD);
+  guestSession.attachDirector(guestD, { onSceneOver: () => guestD.finish() });
+
+  /* Biraz izle, sonra host atlasın */
+  let t0 = Date.now();
+  while (Date.now() - t0 < 700) { hostD.update(1 / 60); guestD.update(1 / 60); await sleep(6); }
+
+  const guestBefore = guestD.time;
+  hostD.skip();
+  hostSession.detachDirector();            // main.js oyuna geçerken bunu yapıyor
+
+  t0 = Date.now();
+  while (Date.now() - t0 < 700) { guestD.update(1 / 60); await sleep(6); }
+
+  check('host atladı ve sahnesi bitti', hostEnded, 'host bitmedi');
+  check('MİSAFİR DE SAHNEYİ KAPATTI',
+    guestEnded, `misafir ${guestBefore.toFixed(1)} → ${guestD.time.toFixed(1)} sn'de takılı`);
+
+  hostSession.destroy(); guestSession.destroy();
+}
+
+/* ==========================================================================
+   14. TEKLİF, ATLAMAYLA BİLE KAPANMAZ
+
+   En önemli kontrol. Karşı taraf cevap vermeden sahnenin kapanması,
+   bu uygulamanın tek amacının kaybolması demek.
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'a', targetName: 'b', proposalText: 'Soru?' };
+
+  let ended = null;
+  const guestD = new Director(SCENES['outro-ask'], { config, onEnd: (i) => { ended = i; } });
+  guestD.seek(SCENES['outro-ask'].choice.t - 0.05);
+  for (let i = 0; i < 20; i++) guestD.update(1 / 60);
+
+  check('teklif anında sahne bekliyor', guestD.awaitingChoice, `t=${guestD.time.toFixed(2)}`);
+
+  /* Host "bitti" dedi — ama cevap yok */
+  guestD.finish();
+  check('CEVAP VERİLMEDEN TEKLİF KAPANMIYOR',
+    ended === null && guestD.awaitingChoice && !guestD.ended,
+    `ended=${JSON.stringify(ended)}`);
+
+  /* Cevap verilince normal akış sürüyor */
+  guestD.submitChoice('yes');
+  for (let i = 0; i < 400 && !ended; i++) guestD.update(1 / 60);
+  check('cevap verilince sahne tamamlanıyor',
+    ended && ended.choice === 'yes', JSON.stringify(ended));
+}
+
+/* ==========================================================================
    Rapor
    ========================================================================== */
 console.log('\n=== CO-OP ENTEGRASYON TESTİ ===');

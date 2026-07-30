@@ -530,6 +530,10 @@ Hepsi gerçek hatalardan doğdu. Bu koda dokunan herkes okumalı.
 | **Simülasyon rAF'e bağlanmaz — `core/ticker.js` kullanılır** | Tarayıcı gizli sekmede `requestAnimationFrame`'i durdurur. Host sekmesi arkadayken YETKİLİ dünya hiç adım atmıyor, misafir "hayalet" oluyordu. Ticker gizliyken Worker zamanlayıcısına geçer; Worker'daki zamanlayıcılar kısılmaz. Çizim atlanır, simülasyon döner. |
 | **Sekme gizlenince oyunu DURAKLATMA** | Bir tur denendi ve daha kötü oldu: iki sekmeyle test imkânsızlaştı, sekme değiştiren oyuncu donmuş ekran gördü, "atla" tuşu çalışmaz göründü. Semptomu gizleyip sebebi çözmeyen yamaydı. Sebep ticker ile çözüldü. |
 | **Ana iş parçacığında `setInterval` yedek değildir** | Arka planda saniyede bire kısılıyor. Worker şart. |
+| **Ağ modunda kare telafisi sıkı tutulur (2 adım)** | Gecikmiş kareden sonra 5 adım üst üste koşmak misafiri 5 kare birden sıçratıyor ("uçuyor") ve tek tıkta 5 girdi paketi yollayıp host'un kuyruğunu taşırıyor. Taşan kuyrukta atılan girdiyi host hiç işlemiyor → kalıcı ayrışma → sert düzeltme. Ağda zaman kaybetmek, adım kaybetmekten iyidir. |
+| **Sahne bittiğinde misafire AÇIKÇA haber verilir (`done`)** | `skip()` sahneyi anında bitirip saat yayınını kesiyor; misafir yeni zamanı öğrenemediği için intro'yu baştan izlemeye devam ediyor ve kendi "atla" tuşu karşılıksız kalıyordu. |
+| **`finish()` cevapsız teklifi ASLA kapatmaz** | Karşı taraf cevap vermeden sahnenin kapanması, uygulamanın tek amacının kaybolması demek. |
+| **Yönetmen yokken sahne alanları gönderilmez** | `id: ''` + `time: 0` misafirin süzgecini deliyor, `syncTo(0)` çalışıyor ve sahne BAŞA SARIYORDU. |
 | **Duraklatma sebepleri sayılır, tek bayrakla tutulmaz** | Menü + hatıra kartı aynı anda olabiliyor; kartı kapatmak menüyü de açıyordu. |
 | **Duraklamadan çıkarken girdi kuyruğu ve anlık görüntü tamponu boşaltılır** | İkisi de duraklamadan öncesine ait; işlemek karaktere geçmişi yeniden oynatıyor. |
 | **`navigator.clipboard` yalnızca https/localhost'ta vardır** | `http://IP:PORT` üzerinde tanımsız. Sessizce başarısız olunca kullanıcı kopyaladığını sanıp panosundaki ESKİ adresi yapıştırıyordu. |

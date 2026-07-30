@@ -221,7 +221,11 @@ function navigateTo(view) {
         onSceneChange: (nextId, choice) => afterCinematic(sceneId, nextId, choice)
       });
       session?.attachDirector(ctrl.director, {
-        onHold: (held) => ctrl.setNetHold(held)
+        onHold: (held) => ctrl.setNetHold(held),
+        /* Host sahneyi atladı ya da bitirdi. Saat yayını kesildiği için
+           misafir yeni zamanı öğrenemez; sahneyi kapatmasını söylüyoruz.
+           Cevapsız teklifte `finish()` hiçbir şey yapmaz. */
+        onSceneOver: () => ctrl.finish()
       });
 
       /* Host, misafirin cevabını ağdan alıp KENDİ yönetmenine uygular.

@@ -303,7 +303,27 @@ export class GameEngine {
       if (!this.running) return;
       let frameTime = (now - this.lastTime) / 1000;
       this.lastTime = now;
-      if (frameTime > 0.25) frameTime = 0.25;   // uzun duraklamadan dönüş koruması
+
+      /* --------------------------------------------------------------
+         KARE TELAFİSİNİ AĞ MODUNDA SIKI TUT.
+
+         Gecikmiş bir kareden sonra sabit adımlı döngü açığı kapatmak
+         için birkaç adımı üst üste koşar. Tek kişilikte bu doğru: zaman
+         kaybolmaz. Ağda ise felaket:
+
+           · Misafir bir tıkta 5 adım koşuyor → karakteri 5 kare birden
+             sıçrıyor. Oyuncunun gördüğü "ışınlanıyor, uçuyor" bu.
+           · Aynı tıkta 5 girdi paketi gidiyor → host'un kuyruğu şişiyor,
+             taşınca EN ESKİ girdi atılıyor. Atılan girdiyi host hiç
+             işlemiyor, misafir işlemiş oluyor: iki dünya KALICI olarak
+             ayrılıyor ve uzlaştırma sert düzeltmeye zorlanıyor.
+
+         Ağda zamanı kaybetmek, adım sayısını kaybetmekten iyidir:
+         uzlaştırma konumu nasılsa düzeltiyor. Bu yüzden telafiyi iki
+         adımla sınırlıyoruz.
+         -------------------------------------------------------------- */
+      const maxFrame = this.netMode ? FIXED_DT * 2 : 0.25;
+      if (frameTime > maxFrame) frameTime = maxFrame;
 
       /* Ağ katmanı buraya giriyor: misafir, fizik adımından ÖNCE gelen
          anlık görüntüyü uygular. Sonra uygularsa kendi tahmini bir kare

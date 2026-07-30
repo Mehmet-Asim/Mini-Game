@@ -87,9 +87,10 @@ export class CoopSession {
    * Sinematik yönetmenini bağla — sahne saati senkronu için.
    * @param opts.onHold(v)  karşı taraf sahneyi beklettiğinde çağrılır
    */
-  attachDirector(director, { onHold } = {}) {
+  attachDirector(director, { onHold, onSceneOver } = {}) {
     this.director = director;
     this.onSceneHold = onHold;
+    this.onSceneOver = onSceneOver;
     this.sceneHold = false;
     this._clearTimer('scene');
     if (this.isHost && director) {
@@ -142,16 +143,46 @@ export class CoopSession {
     this.phase = phase;
     if (levelIndex !== undefined) this.levelIndex = levelIndex;
     if (!this.isHost) return;
-    this.net.send(MSG.SCENE, {
-      id: this.director?.scene?.id || '',
-      time: this.director ? Math.round(this.director.time * 1000) / 1000 : 0,
-      waiting: this.director?.awaitingChoice ? 1 : 0,
-      phase,
-      levelIndex: this.levelIndex
-    });
+    /* --------------------------------------------------------------------
+       SAHNE ALANLARINI YÖNETMEN YOKKEN GÖNDERME.
+
+       Buradaki `|| ''` ve `: 0` bir felakete yol açıyordu. Host sahneyi
+       atlayınca oyuna geçiyor, `detachDirector()` yönetmeni siliyor ve
+       hemen ardından `setPhase(GAME)` çağrılıyordu. Yönetmen null olduğu
+       için paket `id: ''` ve `time: 0` ile gidiyordu.
+
+       Misafirin süzgeci `if (m.id && ...)` şeklindeydi: BOŞ kimlik
+       süzgeci deliyor, `syncTo(0)` çalışıyor ve misafirin sahnesi
+       BAŞA SARIYORDU. Sonrasında host'un yönetmeni olmadığı için misafirin
+       "atla" isteği de karşılıksız kalıyor, misafir intro'yu baştan
+       izlemek zorunda kalıyor ve oyuna dakikalarca geç giriyordu.
+
+       Kullanıcının tarif ettiği üç belirtinin tamamı bu tek satırdı.
+       -------------------------------------------------------------------- */
+    const d = this.director;
+    const msg = { phase, levelIndex: this.levelIndex };
+    if (d) {
+      msg.id = d.scene.id;
+      msg.time = Math.round(d.time * 1000) / 1000;
+      msg.waiting = d.awaitingChoice ? 1 : 0;
+    }
+    this.net.send(MSG.SCENE, msg);
   }
 
   detachDirector() {
+    /* Sahneden çıkarken misafire AÇIKÇA haber ver.
+       4 Hz yayının bir sonraki paketini beklemek yetmiyor: atlamadan
+       sonra host sahneyi bitirip oyuna geçerken arada 250 ms'lik bir
+       pencere var ve o pencerede hiçbir şey gitmiyordu. Misafir sahneyi
+       izlemeye devam edip oyuna çok geç giriyordu. */
+    if (this.isHost && this.director) {
+      this.net.send(MSG.SCENE, {
+        id: this.director.scene.id,
+        done: 1,
+        phase: this.phase || undefined,
+        levelIndex: this.levelIndex
+      });
+    }
     this.director = null;
     this._clearTimer('scene');
   }
@@ -201,10 +232,23 @@ export class CoopSession {
       if (m.phase) this.phase = m.phase;
       if (m.levelIndex !== undefined) this.levelIndex = m.levelIndex;
 
+      /* HOST SAHNEYİ BİTİRDİ (atladı ya da sonuna geldi).
+         Yayın bu paketten sonra kesiliyor; zamanı öğrenme şansımız yok.
+         Bu yüzden sahneyi biz de kapatıyoruz — yoksa host oyuna geçerken
+         misafir kalan süreyi tek başına izliyordu.
+
+         `finish()` cevapsız bir teklif varken hiçbir şey yapmaz: o karar
+         yalnızca misafirin ve sahne onun cevabını beklemek zorunda. */
+      if (m.done) { this.onSceneOver?.(); return; }
+
       /* Host beklettiyse SAATİNE UYMA — donmuş bir saate kilitlenmek
          sahneyi geri sarıyor. Bunun yerine biz de bekliyoruz. */
       this.onSceneHold?.(!!m.hold);
       if (m.hold) return;
+
+      /* Zaman taşımayan paket (yalnızca evre bildirimi) senkrona girmesin.
+         `syncTo(undefined)` sahne saatini NaN'a çeviriyordu. */
+      if (typeof m.time !== 'number') return;
 
       this.director.syncTo(m.time, 0.2, !!m.waiting);
     }));
