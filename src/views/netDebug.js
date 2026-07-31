@@ -62,9 +62,46 @@ export function attachNetDebug(host, engine, session) {
     if (open) el.innerHTML = render();
   };
 
+  /* ------------------------------------------------------------------------
+     ÇİZİM bölümü
+
+     Ağ satırlarından AYRI ve her modda görünüyor: takılmanın kaynağı çoğu
+     zaman ağ değil, kare maliyeti. Ölçümde bir kare 1280x720'de ~9.7 ms
+     sürüyor; aynı kare dpr=2 olan bir ekranda dört kat pahalı çünkü maliyet
+     piksel sayısıyla büyüyor. O yüzden dpr ve gerçek tuval çözünürlüğü de
+     burada — "neden onun bilgisayarında daha kötü?" sorusunun cevabı
+     genelde bu satırda yazıyor.
+
+     ORTALAMA YOK, yüzdelik var: tökezleme nadir bir olay ve ortalamanın
+     içinde kayboluyor (bkz. core/perf.js).
+     ------------------------------------------------------------------------ */
+  function drawRows() {
+    const p = engine.perf?.read();
+    if (!p || p.samples < 10) return row('ÇİZİM', 'ölçülüyor...');
+
+    const r = engine.renderer;
+    const px = r?.canvas ? `${r.canvas.width}x${r.canvas.height}` : '—';
+    /* 16.7 ms = 60 fps bütçesi. Çizim bunun yarısını geçiyorsa geri kalan
+       her şeye (simülasyon, ağ, tarayıcının kendi işi) yer kalmıyor. */
+    const budget = (p.drawP95 / 16.67) * 100;
+
+    return [
+      row('KARE', `${FMT(p.fps)} fps · medyan ${FMT(p.frameMedian, 1)} ms`, p.fps >= 55),
+      row('  p95 / en kötü', `${FMT(p.frameP95, 1)} / ${FMT(p.frameMax, 1)} ms`, p.frameP95 < 20),
+      row('  takılma (3 sn)', `${p.janky} kare >20ms · ${p.severe} kare >33ms`, p.severe === 0),
+      /* DİKKAT: bu yalnızca CPU tarafı — canvas komutlarını sıraya koyma
+         süresi. Asıl raster işini GPU sonradan yapıyor, o maliyet buraya
+         YANSIMIYOR. Bu satır düşükken KARE satırı kötüyse darboğaz GPU'da
+         (doldurma maliyeti) demektir; gerçek hüküm hep KARE satırınındır. */
+      row('ÇİZİM (cpu)', `medyan ${FMT(p.drawMedian, 1)} ms · p95 ${FMT(p.drawP95, 1)} ms`, p.drawP95 < 8),
+      row('  cpu bütçe payı', `%${FMT(budget)} (16.7 ms üzerinden)`, budget < 50),
+      row('  tuval', `${px} · dpr ${FMT(r?.dpr, 2)}`)
+    ].join('');
+  }
+
   function render() {
     if (!session) {
-      return row('MOD', 'tek kişilik — ağ yok');
+      return row('MOD', 'tek kişilik — ağ yok') + drawRows();
     }
     const isHost = session.isHost;
     const me = engine.players[engine.localIndex];
@@ -115,7 +152,7 @@ export function attachNetDebug(host, engine, session) {
       row('YOLDAŞ', mate ? `x=${FMT(mate.x)} y=${FMT(mate.y)}` : '—')
     );
 
-    return lines.join('');
+    return lines.join('') + drawRows();
   }
 
   function row(k, v, ok) {

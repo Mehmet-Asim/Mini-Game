@@ -23,8 +23,47 @@ export class Renderer {
     this.dpr = 1;
   }
 
+  /* --------------------------------------------------------------------
+     Çözünürlük bütçesi
+
+     Bu oyunun kare maliyeti ÇİZİLEN PİKSEL SAYISIYLA doğru orantılı:
+     ekranı kaplayan gökyüzü, tepeler, sis, ışık, vinyet... hepsi dolgu.
+     Yani maliyet dpr'nin KARESİYLE büyüyor.
+
+     Ölçüm (1280x720, kare başına, GPU hattı boşaltılarak):
+
+         dpr 1  →  13 ms      sınırda ama 60 fps tutuyor
+         dpr 2  →  53 ms      ~19 fps
+
+     Retina bir dizüstü ya da telefon `devicePixelRatio = 2` (kimi telefonda
+     3) bildiriyor. Eski kod bunu olduğu gibi kabul ediyordu; oyunu davet
+     edilen kişinin cihazında oynanamaz yapan şey buydu — kod aynı, piksel
+     sayısı dört katı.
+
+     Bu yüzden iki ayrı tavan var:
+
+       DPR_CAP     keskinliği bir yere kadar takip et. 1.5 hâlâ gözle
+                   görülür biçimde dpr 1'den net; 2'ye çıkmanın kazancı
+                   bu sanat tarzında küçük, bedeli iki katı piksel.
+
+       PIXEL_CAP   toplam piksel tavanı. Tek başına dpr yetmiyor: dpr 1
+                   olan 4K bir pencere de 8 milyon piksel demek. Tavanı
+                   aşınca ölçek orantılı düşürülüyor.
+
+     Tuval CSS boyutunda esnetiliyor, yani oyun alanı küçülmüyor —
+     yalnızca biraz yumuşuyor. Prosedürel ve zaten puslu bir sahne
+     olduğu için bu neredeyse fark edilmiyor.
+
+     F3 panelindeki "tuval" satırı sonucu gösteriyor.
+     -------------------------------------------------------------------- */
   resize(cssW, cssH) {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const DPR_CAP = 1.5;
+    const PIXEL_CAP = 1920 * 1080;
+
+    let dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1);
+    const pixels = cssW * cssH * dpr * dpr;
+    if (pixels > PIXEL_CAP) dpr *= Math.sqrt(PIXEL_CAP / pixels);
+
     this.dpr = dpr;
     this.canvas.width = Math.floor(cssW * dpr);
     this.canvas.height = Math.floor(cssH * dpr);
@@ -346,27 +385,63 @@ export class Renderer {
     ctx.restore();
   }
 
+  /* --------------------------------------------------------------------
+     Vinyet + ambiyans + tarama çizgileri — HER KAREDE AYNI GÖRÜNTÜ
+
+     Bu üç katman yalnızca (genişlik, yükseklik, tema, dpr) değerlerine
+     bağlı. Zaman da geçmiyor, kamera da kaymıyor — kare kare birebir aynı
+     pikseller üretiliyordu. Buna rağmen her karede iki TAM EKRAN dolgu
+     (biri gradyan) artı yükseklik/3 kadar fillRect yapılıyordu.
+
+     Ölçümde bu geçiş tek başına 2.25 ms tutuyordu: 16.7 ms'lik kare
+     bütçesinin %13'ü, hem de hiç değişmeyen bir görüntü için. Maliyet
+     piksel sayısıyla büyüdüğü için dpr=2 olan bir ekranda dört katı.
+
+     Artık bir kez çizilip saklanıyor; karede tek `drawImage` kalıyor.
+     Görüntü birebir aynı — saklanan şey zaten o görüntünün kendisi.
+     -------------------------------------------------------------------- */
   _vignette(ctx, theme) {
+    const key = `${this.w}x${this.h}@${this.dpr}|${theme}`;
+    if (this._vigKey !== key) this._bakeVignette(theme, key);
+    if (this._vig) ctx.drawImage(this._vig, 0, 0, this.w, this.h);
+  }
+
+  _bakeVignette(theme, key) {
     const t = THEMES[theme] || THEMES.forest;
-    const g = ctx.createRadialGradient(
+    const w = Math.max(1, Math.floor(this.w * this.dpr));
+    const h = Math.max(1, Math.floor(this.h * this.dpr));
+
+    const c = this._vig || (this._vig = document.createElement('canvas'));
+    c.width = w;
+    c.height = h;
+    const g2 = c.getContext('2d');
+    if (!g2) { this._vig = null; return; }
+
+    /* Saydamlık KORUNMALI: bu katman sahnenin üstüne source-over biniyor,
+       vinyetin ortası şeffaf olmasa manzara kapanırdı. */
+    g2.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    g2.clearRect(0, 0, this.w, this.h);
+
+    const g = g2.createRadialGradient(
       this.w / 2, this.h / 2, Math.min(this.w, this.h) * 0.32,
       this.w / 2, this.h / 2, Math.max(this.w, this.h) * 0.78
     );
     g.addColorStop(0, 'rgba(0,0,0,0)');
     g.addColorStop(0.65, 'rgba(0,0,0,0.28)');
     g.addColorStop(1, 'rgba(0,0,0,0.68)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.w, this.h);
+    g2.fillStyle = g;
+    g2.fillRect(0, 0, this.w, this.h);
 
     // Tema ambiyansı
-    ctx.fillStyle = t.ambient;
-    ctx.fillRect(0, 0, this.w, this.h);
+    g2.fillStyle = t.ambient;
+    g2.fillRect(0, 0, this.w, this.h);
 
     // Tarama çizgileri (çok hafif retro dokunuş)
-    ctx.save();
-    ctx.globalAlpha = 0.025;
-    ctx.fillStyle = '#000';
-    for (let y = 0; y < this.h; y += 3) ctx.fillRect(0, y, this.w, 1);
-    ctx.restore();
+    g2.globalAlpha = 0.025;
+    g2.fillStyle = '#000';
+    for (let y = 0; y < this.h; y += 3) g2.fillRect(0, y, this.w, 1);
+    g2.globalAlpha = 1;
+
+    this._vigKey = key;
   }
 }

@@ -12,6 +12,7 @@ import { Player } from './player.js';
 import { Dragon, BOSS_MAX_HP } from './boss.js';
 import { LEVELS, buildLevel, GROUND_Y, DEATH_Y } from './levels.js';
 import { createTicker } from '../core/ticker.js';
+import { FrameMeter } from '../core/perf.js';
 import {
   MovingPlatform, CrumblePlatform, Spike, Walker, Flyer, Caster,
   Heart, LifeOrb, Checkpoint, Portal, Arrow, ShieldPickup,
@@ -21,6 +22,12 @@ import {
 const FIXED_DT = 1 / 60;
 const MAX_STEPS = 5;
 const START_LIVES = 3;
+
+/* Telafi adımı eşikleri (bkz. _catchUpSteps).
+   Hedef derinlik, girdi kuyruğunun jitter tamponu olarak taşıması GEREKEN
+   miktar — onu eritmek açlığa yol açar. Yalnızca üstündeki fazlalık eritilir. */
+const INPUT_BACKLOG_TARGET = 6;
+const MAX_CATCHUP_STEPS = 2;
 
 /* Co-op sabitleri */
 const REVIVE_RANGE = 46;      // yoldaşın kaldırmak için ne kadar yaklaşması gerek
@@ -40,6 +47,9 @@ export class GameEngine {
     this.renderer = new Renderer(this.canvas);
     this.particles = new Particles();
     this.camera = new Camera(800, 500);
+    /* Kare ölçer — F3 panelinin "ÇİZİM" bölümünü besliyor. Her karede iki
+       sayı yazıyor, ölçmenin kendi maliyeti yok denecek kadar az. */
+    this.perf = new FrameMeter();
 
     /* --------------------------------------------------------------------
        Oyuncular
@@ -301,7 +311,11 @@ export class GameEngine {
        geçiyor; simülasyon dönmeye devam ediyor, yalnızca çizim atlanıyor. */
     this.ticker = createTicker((now, visible) => {
       if (!this.running) return;
-      let frameTime = (now - this.lastTime) / 1000;
+      /* Ölçüm KIRPILMAMIŞ süreyle yapılır. Aşağıdaki `maxFrame` kırpması
+         simülasyonu korumak için var; ölçere de uygularsak 40 ms'lik bir
+         takılma 33 ms görünür ve tam da görmek istediğimiz şeyi gizler. */
+      const rawMs = now - this.lastTime;
+      let frameTime = rawMs / 1000;
       this.lastTime = now;
 
       /* --------------------------------------------------------------
@@ -339,9 +353,53 @@ export class GameEngine {
       }
       if (steps === MAX_STEPS) this.accumulator = 0;
 
+      /* --------------------------------------------------------------
+         TELAFİ ADIMI — host misafirin girdilerine yetişmek zorunda
+
+         Host adım başına misafirden TAM BİR girdi tüketiyor. Yani
+         host'un adım hızı, misafirin girdi üretme hızının altına
+         düşerse kuyruk birikiyor ve MAX_INPUT_QUEUE'ya dayanınca
+         `apply()` en eskiyi atıyor. Atılan girdiyi misafir uyguladı,
+         host uygulamadı: iki dünya arasına KALICI bir fark giriyor ve
+         her atılan girdiyle büyüyor.
+
+         Ölçüldü (60 sn, yalnızca host'ta 2 saniyede bir 120 ms takılma —
+         yani ortalama 58 adım/sn, %3 eksik):
+
+             takılma yok  →    0 girdi atıldı, sapma 0.2 px sabit
+             120ms/2sn    →  124 girdi atıldı, sapma 0.2 → 179.7 px
+             150ms/0.5sn  →  806 girdi atıldı, sapma 73 → 110 px
+
+         Yani kusursuz bir ağda bile, host'un ufak bir kare kaybı bir
+         dakika içinde senkronu bozuyor. Gerçek bir oturumun teşhis
+         panelinde sapmanın 0.3 px'ten 355 px'e tırmandığı görüldü;
+         160 px üstü sert ışınlama demek, misafir de boşluklara düşüp
+         ölüyordu.
+
+         Çözüm zamanı kovalamak değil, GİRDİYİ kovalamak: kuyruk hedef
+         derinliğin üstündeyse fazladan adım atıp fazlalığı eritiyoruz.
+         Bu adımlar uydurma değil — her biri misafirin gerçekten
+         uyguladığı, sırada bekleyen bir girdiyi işliyor.
+
+         Kare başına en fazla iki fazladan adım: dünyayı kısa bir süre
+         hızlandırmak fark edilmiyor, ama sınırsız bırakmak takılmadan
+         sonra oyunu ileri sarardı.
+         -------------------------------------------------------------- */
+      if (this.netMode === 'host' && this.state === 'playing') {
+        let extra = this._catchUpSteps();
+        while (extra-- > 0) this._step(FIXED_DT);
+      }
+
       /* Gizliyken çizmeye gerek yok — kimse bakmıyor, tuval de zaten
          ekrana aktarılmıyor. Simülasyon yine döndü, önemli olan o. */
-      if (visible) this.renderer.render(this._renderState(), frameTime);
+      if (visible) {
+        const drawStart = performance.now();
+        this.renderer.render(this._renderState(), frameTime);
+        /* Yalnızca GÖRÜNÜR kareleri ölçüyoruz. Sekme arka plandayken kare
+           kaynağı Worker zamanlayıcısına geçiyor; onun temposu ekranın
+           tazeleme hızı değil, ölçüme karıştırmak sayıları anlamsız kılar. */
+        this.perf.push(rawMs, performance.now() - drawStart);
+      }
     });
     this.ticker.start();
   }
@@ -410,6 +468,23 @@ export class GameEngine {
       hitStop: this.hitStop,
       lives: this.lives
     };
+  }
+
+  /**
+   * Bu karede kaç FAZLADAN adım atmalı — uzak girdi kuyruğundaki birikime
+   * göre. Sıfır dönerse host misafire yetişiyor demektir.
+   *
+   * Yalnızca hedef derinliğin ÜSTÜ eritiliyor: kuyruğun kendisi bir jitter
+   * tamponu ve tamamen boşaltmak açlığa (bkz. input.js consumeTick) yol açar.
+   */
+  _catchUpSteps() {
+    let backlog = 0;
+    for (let i = 0; i < this.inputs.length; i++) {
+      const q = this.inputs[i].queue;      // yalnızca RemoteInput'ta var
+      if (q && q.length > backlog) backlog = q.length;
+    }
+    if (backlog <= INPUT_BACKLOG_TARGET) return 0;
+    return Math.min(MAX_CATCHUP_STEPS, backlog - INPUT_BACKLOG_TARGET);
   }
 
   _ctx() {

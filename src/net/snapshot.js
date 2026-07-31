@@ -534,7 +534,29 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
   if (!ak || !ak.seq) return null;
 
   const p = eng.players[localIndex];
-  if (!p || p.dead || p.downed) return null;
+  /* --------------------------------------------------------------------
+     ÖLÜYKEN / YERDEYKEN DE KAYITLARI TEMİZLE.
+
+     Konumu düzeltmiyoruz — o an karakteri host yönetiyor. Ama bekleyen
+     girdi kayıtlarını BIRAKIP çıkmak sessiz bir arızaya yol açıyordu:
+
+       · Yere serilme 14 saniyeye kadar sürüyor (DOWN_TIMEOUT).
+       · `onInputTick` bu süre boyunca saniyede 60 kayıt eklemeye devam ediyor.
+       · Liste 2 saniyede 120'lik tavana dayanıyor ve EN ESKİ kayıt atılıyor.
+       · Atılan kayıt çoğu zaman onayın (ack) denk geldiği kayıt oluyor.
+       · Kaldırıldıktan sonra `rec.seq !== ak.seq` tutuyor ve uzlaştırma
+         null dönüyor — yani karakter tam da konumun önemli olduğu anda,
+         diriliş anında, düzeltmesiz kalıyor.
+
+     Gerçek bir oturumun teşhis panelinde bu "bekleyen: 120" olarak
+     görünüyordu: sayaç tavana yapışmıştı ve orada kalıyordu.
+
+     Duraklatma dalı (aşağıda) bunu zaten doğru yapıyordu; buradaki eksikti.
+     -------------------------------------------------------------------- */
+  if (!p || p.dead || p.downed) {
+    while (pending.length && pending[0].seq <= ak.seq) pending.shift();
+    return null;
+  }
 
   /* Duraklatılmışken uzlaştırma YAPILMAZ.
      Misafir duraklamışken tahmin yürütmüyor ama host onun son tuşlarıyla
