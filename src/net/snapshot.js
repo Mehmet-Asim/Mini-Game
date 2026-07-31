@@ -23,6 +23,10 @@
 
 import { NET } from '../../server/protocol.js';
 import { WOLF_RECOVER, BAT_DIVE } from '../game/entities.js';
+/* Yeniden oynatma, host'un girdi uygularken kullandığı sınıfın AYNISINI
+   kullanıyor — zıplama tamponu, kenar tetiği, eksen hesabı birebir aynı
+   olsun diye. Ayrı bir taklit yazmak iki tarafı sessizce ayırırdı. */
+import { RemoteInput } from '../core/input.js';
 
 const r1 = (v) => Math.round(v);                 // tam sayı
 const r2 = (v) => Math.round(v * 100) / 100;     // iki ondalık
@@ -581,19 +585,85 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
 
   if (err < 5) return err;          // yuvarlama gürültüsü
 
-  if (err > 160) {
-    /* Büyük fark = gerçek bir olay (kapı çarpması, ışınlanma, geri tepme).
-       Host'un GÜNCEL konumuna sert geç. */
-    const s = snap.p?.[localIndex];
-    if (s) { p.x = s.x; p.y = s.y; p.vx = s.vx; p.vy = s.vy; }
-  } else {
-    /* Küçük fark: hatayı güncel konuma yumuşakça ekle. Anlık görüntü
-       başına bir kez (saniyede 20), her karede değil — yoksa düzeltme
-       hareketin önüne geçiyor. */
-    p.x += ex * 0.35;
-    p.y += ey * 0.35;
-  }
+  /* ------------------------------------------------------------------
+     YETKİLİ DURUMA DÖN + BEKLEYEN GİRDİLERİ YENİDEN OYNAT
+
+     Eskiden hatanın %35'i güncel konuma ekleniyordu. Bu, hatayı
+     azaltıyordu ama BİTİRMİYORDU: misafir onaydan bu yana bastığı
+     tuşları hesaba katmadığı için, hareket ettiği sürece bir onay
+     gecikmesi kadar geriden düzeltiliyordu.
+
+     Ölçüldü (host kusursuz 60 fps, hasar olayı yok):
+
+         dururken   →  0.0 px
+         KOŞARKEN   → 43.9 px   ← 43.9 / 330 px/sn = 133 ms
+         dururken   →  0.0 px
+
+     43.9 px tam olarak onay gidiş-dönüş süresi kadar yol. Yani hata
+     rastgele değil, düpedüz "kaybolan girdiler" idi.
+
+     Doğrusu şu: host'un onayladığı duruma geri dön, sonra o andan
+     bu yana bastığımız HER tuşu yeniden uygula. Böylece düzeltme
+     oyuncunun girdilerini silmiyor, üzerine yeniden kuruyor.
+
+     Sert ışınlama dalına artık gerek yok: geri tepme, kapı çarpması,
+     ışınlanma zaten `ak` konumuna yansımış oluyor ve yeniden oynatma
+     onu ileri taşıyor.
+     ------------------------------------------------------------------ */
+  p.x = ak.x;
+  p.y = ak.y;
+  if (Number.isFinite(ak.vx)) p.vx = ak.vx;
+  if (Number.isFinite(ak.vy)) p.vy = ak.vy;
+
+  replayPending(eng, p, pending);
   return err;
+}
+
+/* --------------------------------------------------------------------------
+   Bekleyen girdileri yeniden oynatma
+
+   YAN ETKİ YOK: `player.update` parçacık/kamera/ses kanallarını son üç
+   parametreden alıyor ve hepsini `if (particles)` gibi korumalarla
+   kullanıyor. Üçünü de null geçince saf fizik çalışıyor — yoksa tek
+   zıplama on iki kez toz bulutu üretir, sesler üst üste binerdi.
+   -------------------------------------------------------------------------- */
+
+const REPLAY_DT = 1 / 60;
+/* Tavan: 40 kare ≈ 0.66 sn. Bunun ötesi zaten kurtarılamayacak kadar
+   bayat; sınırsız bırakmak kötü bir ağda kareyi kilitler. */
+const MAX_REPLAY = 40;
+
+/* Tek örnek yeniden kullanılıyor — saniyede 20 kez çağrılıyor, çöp üretmesin */
+let _replayInput = null;
+
+function replayPending(eng, p, pending) {
+  if (!pending.length || !eng.level) return;
+
+  if (!_replayInput) _replayInput = new RemoteInput();
+  const inp = _replayInput;
+  /* Önceki oynatmadan kalan zıplama/saldırı tamponlarını temizle */
+  inp.reset();
+
+  /* Ok yeniden oynatmada DOĞMAZ — gerçek adım zaten doğurdu. Bayrağı
+     koruyup geri koyuyoruz, yoksa her düzeltme fazladan ok yaratırdı. */
+  const savedArrow = p.pendingArrow;
+
+  const start = Math.max(0, pending.length - MAX_REPLAY);
+  for (let i = start; i < pending.length; i++) {
+    const rc = pending[i];
+
+    /* Kaydı düzeltilmiş yörüngeyle TAZELE. Bunu atlarsak bir sonraki
+       uzlaştırma, düzeltmeden önceki konumlarla kıyaslar; aynı hatayı
+       tekrar tekrar uygular ve karakter salınmaya başlar. */
+    rc.x = p.x;
+    rc.y = p.y;
+
+    if (rc.state) inp._set(rc.state);
+    p.update(REPLAY_DT, inp, eng.level, null, null, null);
+    inp.update(REPLAY_DT);
+  }
+
+  p.pendingArrow = savedArrow;
 }
 
 /**

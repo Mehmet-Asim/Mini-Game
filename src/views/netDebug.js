@@ -99,6 +99,20 @@ export function attachNetDebug(host, engine, session) {
     ].join('');
   }
 
+  /* Sapma satırı — değerin yanında YAŞI da var.
+     1 saniyeden eskiyse "bayat" damgası basılıp iyi/kötü rengi
+     kaldırılıyor: o sayı artık şu anki durumu anlatmıyor. */
+  function driftRow(session) {
+    const d = session.stats?.drift ?? 0;
+    const at = session.stats?.driftAt ?? 0;
+    if (!at) return row('  sapma', 'henüz ölçülmedi');
+    const age = performance.now() - at;
+    if (age > 1000) {
+      return row('  sapma', `${FMT(d, 1)} px · ${FMT(age / 1000, 1)} sn önce (bayat)`);
+    }
+    return row('  sapma', `${FMT(d, 1)} px`, d < 40);
+  }
+
   function render() {
     if (!session) {
       return row('MOD', 'tek kişilik — ağ yok') + drawRows();
@@ -143,7 +157,10 @@ export function attachNetDebug(host, engine, session) {
         row('ONAY (ack)', engine.remoteAckSeen ? `seq ${engine.remoteAckSeen}` : 'HİÇ ONAY GELMEDİ',
           !!engine.remoteAckSeen),
         row('  bekleyen', `${ack}`, ack < 60),
-        row('  sapma', `${FMT(session.stats?.drift, 1)} px`, (session.stats?.drift ?? 0) < 40)
+        /* Sapma yalnızca uzlaştırma ÇALIŞTIĞINDA tazeleniyor; oyuncu
+           yerdeyken/ölüyken ve duraklamada güncellenmiyor. Yaşını
+           göstermezsek bayat bir sayı taze sanılıyor (bkz. session.js). */
+        driftRow(session)
       );
     }
 

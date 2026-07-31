@@ -533,7 +533,15 @@ export class GameEngine {
         const consumed = inp.consumeTick();
         if (consumed && p) {
           this._frozen.delete(i);
-          this.remoteAck = { seq: consumed.seq, x: Math.round(p.x), y: Math.round(p.y) };
+          /* HIZ da gidiyor: misafir bu duruma geri dönüp bekleyen
+             girdilerini yeniden oynatacak (bkz. snapshot.js → replayPending).
+             Yalnızca konumla geri dönmek yörüngeyi bozardı — havadayken
+             düşme hızı sıfırlanır, koşarken ivme kaybolurdu. */
+          this.remoteAck = {
+            seq: consumed.seq,
+            x: Math.round(p.x), y: Math.round(p.y),
+            vx: Math.round(p.vx), vy: Math.round(p.vy)
+          };
         } else {
           /* GİRDİ YOK → BU OYUNCUYU BU ADIMDA SİMÜLE ETME.
              Son tuşu tutup fizik işletmek, host'a misafirin atmadığı fazladan

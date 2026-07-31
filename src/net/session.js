@@ -49,7 +49,7 @@ export class CoopSession {
     this.peerOnline = true;
     this.selfOnline = net.status ? net.status === 'online' : true;
     this.lastSnapshotAt = 0;
-    this.stats = { sent: 0, received: 0, bytes: 0, drift: 0 };
+    this.stats = { sent: 0, received: 0, bytes: 0, drift: 0, driftAt: 0 };
     this.phase = null;
     this.levelIndex = 0;
 
@@ -212,7 +212,15 @@ export class CoopSession {
            host'a ulaşmıyor demektir. Panel bunu tek satırda gösteriyor. */
         if (m.d.ak?.seq) this.engine.remoteAckSeen = m.d.ak.seq;
         const err = reconcileLocal(this.engine, m.d, this.localIndex, this.pendingInputs);
-        if (err !== null) this.stats.drift = err;
+        /* Ölçümün YAŞINI da tutuyoruz. Uzlaştırma ölüyken/yerdeyken ve
+           duraklamada null dönüyor; o anlarda `drift` son değerinde
+           donuyordu ve panel bayat bir sayıyı taze gibi gösteriyordu.
+           Gerçek bir teşhiste "sapma 72.8 px" okunup sorun sanılmıştı;
+           oysa oyuncu yerdeydi ve sayı saniyeler öncesine aitti. */
+        if (err !== null) {
+          this.stats.drift = err;
+          this.stats.driftAt = performance.now();
+        }
       }
 
       this.buffer.push(m.d);
@@ -387,7 +395,11 @@ export class CoopSession {
          (bkz. snapshot.js → reconcileLocal) */
       const me = this.engine.players[this.localIndex];
       if (me) {
-        this.pendingInputs.push({ seq, x: me.x, y: me.y });
+        /* `state` de saklanıyor: uzlaştırma yalnızca konumu düzeltmekle
+           kalmıyor, düzeltmenin ARDINDAN bu girdileri yeniden oynatıyor.
+           Girdiyi saklamazsak host'un onayladığı ana geri döner ve
+           oradan sonra bastığımız tuşları kaybederiz. */
+        this.pendingInputs.push({ seq, x: me.x, y: me.y, state });
         if (this.pendingInputs.length > 120) this.pendingInputs.shift();
       }
 
