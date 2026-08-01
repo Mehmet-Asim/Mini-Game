@@ -19,6 +19,11 @@ import {
   Plate, Gate, CoopLift
 } from './entities.js';
 
+/* Misafirin ÖNGÖRDÜĞÜ temas hasarının onay penceresi. Gidiş-dönüş için
+   yeterli; yanlış bir tahmini ekranda tutacak kadar uzun değil. */
+const PREDICT_HURT_WINDOW = 0.45;
+
+
 const FIXED_DT = 1 / 60;
 const MAX_STEPS = 5;
 const START_LIVES = 3;
@@ -674,6 +679,28 @@ export class GameEngine {
     for (const cp of e.crumbles) cp.update(dt);
     if (!guest) this._updateCoop(dt);
 
+    /* ÇÖKEN BLOKLARIN KISA TARİHİ (yalnızca misafirde)
+
+       Uzlaştırma, bekleyen girdileri yeniden oynatıyor; o karelerde dünya
+       da geçmişteki hâlinde olmalı. Hareketli platform saf bir zaman
+       fonksiyonu olduğu için geri sarılabiliyor (bkz. MovingPlatform.seek),
+       ama çöken blok tetiklenmeye bağlı bir durum makinesi: düşmüş bir
+       bloğu analitik olarak geri alamıyoruz.
+
+       O yüzden son birkaç karesini saklıyoruz. Saklanmazsa oynatma, blok
+       ARTIK KATI DEĞİLKEN yapılıyor (`_rebuildSolids` yalnızca `solid`
+       olanları listeye koyuyor) ve oyuncu geçmişte üstünde durduğu
+       bloktan düşüyor — "kırılan bloklarda kayma" buydu. */
+    if (guest && e.crumbles.length) {
+      const hist = this._crumbleHistory || (this._crumbleHistory = []);
+      hist.push(e.crumbles.map(c => ({
+        phase: c.phase, timer: c.timer, vy: c.vy,
+        y: c.y, solid: c.solid, shakeOff: c.shakeOff, animTime: c.animTime
+      })));
+      /* Oynatma tavanı 40 kare; biraz pay bırakıp gerisini atıyoruz. */
+      while (hist.length > 44) hist.shift();
+    }
+
     this._rebuildSolids();
 
     /* --- Oyuncular --- */
@@ -784,6 +811,12 @@ export class GameEngine {
          invuln senkronize edildiği için öngörülebilirlik güvenceye alındı.
          ================================================================ */
       if (me && !me.dead && !me.downed) {
+        /* Öngörü ONAY PENCERESİNİ açmak için: bu blok hasarı yeni mi
+           başlattı? Başlattıysa host onaylayana kadar korunması gerekiyor,
+           yoksa anlık görüntü onu 50 ms içinde siliyor (bkz. aşağıdaki not
+           ve snapshot.js → guestLeadsHurt). */
+        const hadHurt = me.hurtTimer > 0;
+
         const tryBlock = (fromX) => {
           if (!me.blocking || me.blockAmount < 0.5) return false;
           me.blockHit(fromX, null, null);
@@ -830,7 +863,28 @@ export class GameEngine {
             }
           }
         }
+
+        /* ÖNGÖRÜYÜ KORUMA PENCERESİNİ AÇ
+
+           Yukarıdaki tahmin tek başına yetmiyordu. Misafir hasarı host'tan
+           ~70 ms önce görüyor; o aralıkta host hâlâ "hasar yok" diyor ve
+           iki mekanizma tahmini anında siliyordu:
+
+             · applySnapshot, `p.invuln`i host'un 0'ıyla eziyor,
+             · reconcileLocal, `hurtMismatch` görüp oyuncuyu geri tepme
+               ÖNCESİNE çekiyor ve `hurtTimer`i sıfırlıyor.
+
+           Dokunulmazlık silindiği için tahmin bir sonraki karede yeniden
+           tetikleniyor, sonra yine siliniyordu: saniyede 20 kez ileri-geri.
+           Oyuncunun mermi ve diken yerken hissettiği kayma buydu — tahmin
+           yokken olandan da kötüsü.
+
+           Pencere boyunca "misafir hasarlı, host değil" farkı görmezden
+           geliniyor. Dolduğunda host hâlâ hasar görmediyse tahmin normal
+           yoldan geri alınır — yanlış tahmin ekranda kalmıyor. */
+        if (!hadHurt && me.hurtTimer > 0) me.predictHurtCd = PREDICT_HURT_WINDOW;
       }
+      if (me && me.predictHurtCd > 0) me.predictHurtCd = Math.max(0, me.predictHurtCd - dt);
 
       this._stepTipsAndCamera(dt);
       return;

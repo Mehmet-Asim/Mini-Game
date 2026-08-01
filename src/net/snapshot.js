@@ -335,7 +335,12 @@ export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DE
     p.blockAmount = s.bl;
     p.downed = !!s.d;
     p.reviveProgress = s.rv;
-    p.invuln = s.iv;
+    /* Öngörülen dokunulmazlığı host'un sıfırıyla ezme — ezersek tahmin
+       bir sonraki karede yeniden tetiklenir. Pencere dolunca host'un
+       sözü yine geçerli. */
+    if (!(i === localIndex && p.predictHurtCd > 0 && (s.iv ?? 0) <= 0)) {
+      p.invuln = s.iv;
+    }
 
     if (i !== localIndex) {
       /* Yoldaşın silah animasyonları host'un saatinden gelir. Yerel karakterde
@@ -675,7 +680,15 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
   const ex = ak.x - rec.x;
   const ey = ak.y - rec.y;
   const err = Math.hypot(ex, ey);
-  const hurtMismatch = ((ak.ht ?? 0) > 0) !== (p.hurtTimer > 0) || Math.abs((ak.iv ?? 0) - (p.invuln || 0)) > 0.15;
+  /* MİSAFİR ÖNDE GİDİYOR OLABİLİR — tahmini geri alma.
+     Misafir hasarı host'tan ~70 ms önce öngörüyor (bkz. engine.js). Bu
+     tek yönlü farkı uyuşmazlık sayarsak oyuncuyu geri tepme öncesine
+     çeker, dokunulmazlığı sıfırlar, tahmin yeniden tetiklenir ve karakter
+     saniyede 20 kez ileri-geri sarsılır. TERS yön (host hasarlı, misafir
+     değil) muaf DEĞİL: asıl düzeltmemiz gereken durum o. */
+  const guestLeadsHurt = p.predictHurtCd > 0 && (ak.ht ?? 0) <= 0 && p.hurtTimer > 0;
+  const hurtMismatch = !guestLeadsHurt &&
+    (((ak.ht ?? 0) > 0) !== (p.hurtTimer > 0) || Math.abs((ak.iv ?? 0) - (p.invuln || 0)) > 0.15);
 
   if (err < 5 && !hurtMismatch) return err;          // yuvarlama gürültüsü ve hasar durumu uyumlu
 
@@ -686,8 +699,12 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
   p.y = ak.y;
   if (Number.isFinite(ak.vx)) p.vx = ak.vx;
   if (Number.isFinite(ak.vy)) p.vy = ak.vy;
-  p.hurtTimer = ak.ht ?? 0;
-  p.invuln = ak.iv ?? 0;
+  /* Konum hatası başka bir sebepten büyükse buraya misafir öndeyken de
+     girilebiliyor; o durumda tahmini silme. */
+  if (!guestLeadsHurt) {
+    p.hurtTimer = ak.ht ?? 0;
+    p.invuln = ak.iv ?? 0;
+  }
 
   replayPending(eng, p, pending);
   return err;
@@ -723,6 +740,58 @@ function replayPending(eng, p, pending) {
   const savedArrow = p.pendingArrow;
 
   const start = Math.max(0, pending.length - MAX_REPLAY);
+
+  /* ------------------------------------------------------------------
+     HAREKETLİ PLATFORMLARI DA GERİ SAR
+
+     Eskiden yeniden oynatma yalnızca `eng.level` ile yapılıyordu ve
+     hareketli platformlar ŞİMDİKİ konumlarında donuyordu. İki sonucu
+     vardı:
+
+       · `player._moveAndCollide` üstünde durulan platformun `dx`'ini
+         ekliyor; donmuş `dx` her oynatma karesinde TEKRAR uygulanıyordu.
+       · Çarpışma, platformun geçmişteki değil şimdiki yerine karşı
+         çözülüyordu.
+
+     Ölçüldü (bölüm 2, 10 karelik oynatma, tek uzlaştırma):
+
+         yatay platform  → oyuncu 9.11 px yana kaydı (beklenen 10.12)
+         dikey platform  → ~0 (zemin kelepçesi hayalet taşımayı yutuyor)
+
+     Yatayda kelepçeleyecek bir şey olmadığı için hata doğrudan konuma
+     yazılıyordu; uzlaştırma saniyede ~25 kez çalıştığı için de oyuncu
+     sürekli yana çekiliyordu ("hareketli bloklarda kayma").
+
+     Konum saf bir `animTime` fonksiyonu olduğundan platformu tam olarak
+     geri sarabiliyoruz: oynatma başına alıp kare kare ilerletiyor,
+     sonunda gerçek hâline geri koyuyoruz. `_rebuildSolids` şart —
+     `level.solids` platform nesnelerini konumlarıyla taşıyor.
+     ------------------------------------------------------------------ */
+  const platforms = eng.entities?.movingPlatforms || [];
+  const saved = platforms.map(m => ({ m, animTime: m.animTime, x: m.x, y: m.y, dx: m.dx, dy: m.dy }));
+  const frames = pending.length - start;
+  for (const s of saved) s.m.seek(s.animTime - frames * REPLAY_DT);
+
+  /* Çöken bloklar geri sarılamıyor (tetiklemeye bağlı durum makinesi),
+     bu yüzden motor son karelerini saklıyor — bkz. engine.js. Şimdiki
+     hâllerini kenara koyup oynatma boyunca tarihten besleyeceğiz. */
+  const crumbles = eng.entities?.crumbles || [];
+  const hist = eng._crumbleHistory;
+  const crumbleNow = crumbles.map(c => ({
+    c, phase: c.phase, timer: c.timer, vy: c.vy,
+    y: c.y, solid: c.solid, shakeOff: c.shakeOff, animTime: c.animTime
+  }));
+  const applyCrumble = (snapArr) => {
+    if (!snapArr) return false;
+    for (let k = 0; k < crumbles.length; k++) {
+      const s = snapArr[k]; if (!s) continue;
+      const c = crumbles[k];
+      c.phase = s.phase; c.timer = s.timer; c.vy = s.vy;
+      c.y = s.y; c.solid = s.solid; c.shakeOff = s.shakeOff; c.animTime = s.animTime;
+    }
+    return true;
+  };
+
   for (let i = start; i < pending.length; i++) {
     const rc = pending[i];
 
@@ -732,10 +801,41 @@ function replayPending(eng, p, pending) {
     rc.x = p.x;
     rc.y = p.y;
 
+    /* Dünya bu oynatma karesine ilerlesin — oyuncudan ÖNCE, gerçek
+       adımdaki sırayla (bkz. engine.js → _stepPlaying). */
+    let worldMoved = false;
+    if (saved.length) {
+      for (const s of saved) s.m.update(REPLAY_DT);
+      worldMoved = true;
+    }
+    /* Çöken blokları o karedeki hâline getir. `i` ne kadar geride?
+       Son bekleyen kayıt "şimdi"ye denk geliyor. Tarih kısaysa (oyun
+       yeni başladıysa) o kareyi olduğu gibi bırakıyoruz — yanlış bir
+       kareyi uygulamaktansa dokunmamak daha güvenli. */
+    if (hist && hist.length) {
+      const back = pending.length - 1 - i;
+      if (applyCrumble(hist[hist.length - 1 - back])) worldMoved = true;
+    }
+    if (worldMoved) eng._rebuildSolids();
+
     if (rc.state) inp._set(rc.state);
     p.update(REPLAY_DT, inp, eng.level, null, null, null);
     inp.update(REPLAY_DT);
   }
+
+  /* Gerçek (şimdiki) duruma geri koy: oynatma bir simülasyon değil,
+     geçmişin tekrarı. Dünyayı oynatmanın bıraktığı yerde bırakmak
+     çizimi ve bir sonraki adımı bozardı. */
+  for (const s of saved) {
+    s.m.animTime = s.animTime;
+    s.m.x = s.x; s.m.y = s.y;
+    s.m.dx = s.dx; s.m.dy = s.dy;
+  }
+  for (const s of crumbleNow) {
+    s.c.phase = s.phase; s.c.timer = s.timer; s.c.vy = s.vy;
+    s.c.y = s.y; s.c.solid = s.solid; s.c.shakeOff = s.shakeOff; s.c.animTime = s.animTime;
+  }
+  if (saved.length || crumbleNow.length) eng._rebuildSolids();
 
   p.pendingArrow = savedArrow;
 }

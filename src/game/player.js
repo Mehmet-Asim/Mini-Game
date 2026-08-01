@@ -129,6 +129,10 @@ export class Player {
     this.blockFlash = 0;      // engelleme çarpma efekti
 
     this.invuln = 0;
+    /* Yalnızca MİSAFİRDE: öngörülen temas hasarının onay penceresi.
+       Bu süre boyunca host henüz hasarı görmediği için gönderdiği sıfır
+       değerler tahmini silmiyor (bkz. engine.js, snapshot.js). */
+    this.predictHurtCd = 0;
     this.hurtTimer = 0;
     this.dead = false;
     this.deathTimer = 0;

@@ -38,6 +38,27 @@ globalThis.cancelAnimationFrame = () => {};
 
 const container = () => ({ appendChild: () => {}, getBoundingClientRect: () => ({ width: 800, height: 500, x: 0, y: 0 }) });
 
+/* ÖLÇÜM TEKRARLANABİLİR OLSUN — `Math.random` tohumlanıyor.
+
+   Düşmanların başlangıç yörünge fazı rastgeleydi (`rand()`, bkz.
+   entities.js → Flyer) ve bu, bölüm 3 ölçümünü aynı kodda 7.2 ile
+   20.0 px arasında gezdiriyordu. Sonucu eşiğe bağlayınca test rastgele
+   patlıyor; daha kötüsü, bir düzeltmenin işe yarayıp yaramadığı
+   ölçülemiyordu — bu projede tam olarak bu yüzden iki yanlış teşhis
+   yapıldı. Tohumlu üreteçle her koşu aynı dünyayı kuruyor.
+
+   Not: rastgeleliğin ÇEŞİTLİLİĞİ burada bir değer değil; bu test
+   senkron kalitesini ölçüyor, oyunun rastgelelik dağılımını değil. */
+{
+  let a = 0x9E3779B9 >>> 0;
+  Math.random = () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const { GameEngine } = await import('../src/game/engine.js');
 const { serializeSnapshot, applySnapshot, reconcileLocal, SnapshotBuffer } = await import('../src/net/snapshot.js');
 const { packInput, unpackInput } = await import('../server/protocol.js');
@@ -107,7 +128,7 @@ function makeEngine(netMode, localIndex, levelIndex = 0, extraCb = {}) {
    Ana simülasyon
    -------------------------------------------------------------------------- */
 
-function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false, ridePlatform = false }) {
+function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false, ridePlatform = false, contact = false }) {
   const host = makeEngine('host', 0, levelIndex);
 
   /* Misafirin girdisi motorun SABİT ADIMINDAN yollanıyor — oyunda da
@@ -179,6 +200,25 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
   });
 
 
+  /* TEMAS SENARYOSU — düşman hasarı.
+     İki karakteri de bir devriye düşmanının yoluna dikip bekletiyoruz;
+     düşman gelip çarpıyor. Hasar kararı HOST'ta veriliyor, misafir
+     geri tepmeyi öngörmüyor: ölçmek istediğimiz sapma bu. */
+  if (contact) {
+    /* İKİ MOTORDA DA HER İKİ oyuncuyu konumlandırmak şart. Önce yalnızca
+       `guest.players[1]` taşınmıştı; host'un misafir kopyası bölüm
+       başında kalıyor, düşman ona hiç değmiyor ve ölçüm sessizce
+       sıfırlanıyordu (temas sayacı: misafir 0). */
+    for (const eng of [host, guest]) {
+      const w = eng.entities.enemies.find(e => e.type === 'walker');
+      if (!w) continue;
+      const g = eng.players[1];          // misafirin karakteri: düşmanın ÜSTÜNDE
+      g.x = w.x; g.y = w.y - g.h; g.vx = 0; g.vy = 0;
+      const h = eng.players[0];          // host'unki uzakta dursun, ölçümü kirletmesin
+      h.x = w.x - 320; h.y = w.y - h.h; h.vx = 0; h.vy = 0;
+    }
+  }
+
   /* HAREKETLİ PLATFORM SENARYOSU
      Normal senaryo sağa-sola koşuyor ve platformlara neredeyse hiç
      basmıyor; oysa oyuncunun bildirdiği takılma yalnızca platform
@@ -246,6 +286,11 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
 
     /* Platform senaryosunda ikisi de KIMILDAMIYOR — ölçülen şey yalnızca
        platformun taşımasının senkron kalıp kalmadığı. */
+    if (contact) {
+      hi.right = hi.left = false; hi.jumpHeld = false;
+      gi.right = gi.left = false; gi.jumpHeld = false;
+    }
+
     if (ridePlatform) {
       hi.right = hi.left = false; hi.jumpHeld = false;
       gi.right = gi.left = false;
@@ -421,7 +466,7 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
 
   return {
     peerAvg: avg(samples.peer), peerP95: p95(samples.peer),
-    selfAvg: avg(samples.self), selfP95: p95(samples.self),
+    selfAvg: avg(samples.self), selfP95: p95(samples.self), selfMax: Math.max(0, ...samples.self),
     enemyAvg: avg(samples.enemy), enemyP95: p95(samples.enemy),
     jerkAvg: avg(samples.jerk), jerkP95: p95(samples.jerk), jerkMax: Math.max(0, ...samples.jerk),
     offPathP95: p95(samples.offPath), offPathMax: Math.max(0, ...samples.offPath),
@@ -509,6 +554,106 @@ check('bölüm 2 platform üstünde fazladan takılma yok', l2.jerkP95 < 6, `p95
   g.applyRemoteHits([gt.id]);
   check('misafir kendi motorunda isabet uygulayamıyor', !gt.dying);
 }
+
+
+/* ==========================================================================
+   YENİDEN OYNATMA SIRASINDA DÜNYA DA GERİ SARILIYOR MU?
+
+   Uzlaştırma, onaylanmamış girdileri yeniden oynatıyor. O karelerde dünya
+   da geçmişteki hâlinde olmalı. Eskiden yalnızca statik geometri
+   veriliyordu; hareketli platform ve çöken blok ŞİMDİKİ hâllerinde
+   donuyordu.
+
+   Bu iki kontrol AYRI duruyor çünkü yukarıdaki büyük senaryolar bu yolu
+   hiç geçmiyor: oyuncu 720 karenin 1'inde platformda kalıyor. Bir ara
+   "platform senaryosu" ile ölçtüğümüz sayı bu yüzden anlamsızdı ve
+   düzeltmenin işe yaradığı sanılmıştı. Aşağıdakiler oyuncuyu doğrudan
+   ilgili zemine oturtup GERÇEK `reconcileLocal` yolunu çağırıyor.
+   ========================================================================== */
+{
+  /* --- Hareketli platform: üstünde duran oyuncu kaymamalı --- */
+  const eng = makeEngine('guest', 1, 1);
+  const p = eng.players[1];
+  const plat = eng.entities.movingPlatforms.find(m => m.rangeX > 0);   // yatay olan
+  check('bölüm 2de yatay hareketli platform var (test anlamlı)', !!plat);
+
+  if (plat) {
+    const inp = eng.inputs[1];
+    p.x = plat.x + plat.w / 2 - p.w / 2;
+    p.vx = 0; p.vy = 0;
+    for (let i = 0; i < 90; i++) {
+      plat.update(DT);
+      eng._rebuildSolids();
+      p.update(DT, inp, eng.level, null, null, null);
+      if (i < 5 && !p.onPlatform) { p.y = plat.y - p.h - 2; p.vy = 0; }
+    }
+    /* Kurulum tutmadıysa SESSİZCE geçmesin — ölçtüğünü sandığın şeyi
+       ölçmemek, bu projede en pahalı hata oldu. */
+    check('oyuncu hareketli platforma oturdu (kurulum)', !!(p.onPlatform && p.grounded));
+
+    if (p.onPlatform) {
+      const N = 10;
+      const pend = [];
+      for (let i = 0; i < N; i++) pend.push({ seq: i + 1, x: p.x, y: p.y, state: {} });
+      const relBefore = { x: p.x - plat.x, y: p.y - plat.y };
+
+      /* Hasar uyuşmazlığı vererek uzlaştırmayı ZORLA (err küçük olsa bile) */
+      p.hurtTimer = 0; p.invuln = 0;
+      reconcileLocal(eng, { ak: { seq: 1, x: p.x, y: p.y, vx: p.vx, vy: p.vy, ht: 0.2, iv: 1 } }, 1, pend);
+
+      const slip = Math.hypot((p.x - plat.x) - relBefore.x, (p.y - plat.y) - relBefore.y);
+      /* Düzeltmeden önce ~15 px ölçülmüştü (donmuş dx her karede tekrar
+         uygulanıyordu). Yatayda kelepçeleyecek bir şey olmadığı için hata
+         doğrudan konuma yazılıyordu. */
+      check('platform üstünde yeniden oynatma oyuncuyu kaydırmıyor', slip < 5,
+        `kayma ${slip.toFixed(1)}px`);
+    }
+  }
+}
+
+{
+  /* --- Çöken blok: geçmişte KATI olan bloktan düşülmemeli --- */
+  const eng = makeEngine('guest', 1, 1);
+  const p = eng.players[1];
+  const cr = eng.entities.crumbles[0];
+  check('bölüm 2de çöken blok var (test anlamlı)', !!cr);
+
+  if (cr) {
+    const pend = [];
+    let seq = 0;
+    const step = () => { eng._stepPlaying(DT); pend.push({ seq: ++seq, x: p.x, y: p.y, state: {} }); };
+
+    p.x = cr.x + cr.w / 2 - p.w / 2; p.vx = 0; p.vy = 0;
+    for (let i = 0; i < 25; i++) { step(); if (i < 8 && !p.grounded) { p.y = cr.y - p.h - 2; p.vy = 0; } }
+    check('oyuncu çöken bloğa oturdu (kurulum)', p.grounded);
+
+    /* Blok çöküp KATI OLMAYANA kadar ilerlet: artık geçmişte katı,
+       şimdi değil — yeniden oynatmanın yanlış yaptığı tam an. */
+    let guard = 0;
+    while (cr.solid && guard++ < 240) step();
+    for (let i = 0; i < 6; i++) step();
+    check('çöken blok artık katı değil (kurulum)', !cr.solid);
+
+    const target = pend[pend.length - 1 - 10];
+    if (target && !cr.solid) {
+      const yBefore = p.y;
+      p.hurtTimer = 0; p.invuln = 0;
+      reconcileLocal(eng, { ak: { seq: target.seq, x: target.x, y: target.y, vx: 0, vy: 0, ht: 0.2, iv: 1 } }, 1, pend);
+      /* Düzeltmeden önce oyuncu burada 12.4 px aşağı düşüyordu: oynatma
+         sırasında blok listede yoktu, oyuncu içinden geçiyordu. */
+      const drop = p.y - yBefore;
+      check('çöken blokta yeniden oynatma oyuncuyu düşürmüyor', Math.abs(drop) < 5,
+        `${drop.toFixed(1)}px düştü`);
+    }
+  }
+}
+
+/* DÜŞMAN TEMASI — hasar alınca sapma. */
+const ct = simulate({ seconds: 12, latency: 60, jitter: 20, loss: 0, levelIndex: 0, contact: true });
+console.log(`
+[ölçüm] düşman teması: uzlaştırma ort ${ct.selfAvg.toFixed(1)}px · ` +
+  `p95 ${ct.selfP95.toFixed(1)}px · TEPE ${ct.selfMax.toFixed(1)}px
+`);
 
 /* Karakter HAREKETLİ PLATFORMUN ÜSTÜNDE dururken. Asıl şikâyet bu. */
 const ride = simulate({ seconds: 12, latency: 150, jitter: 60, loss: 0.05, levelIndex: 1, ridePlatform: true });

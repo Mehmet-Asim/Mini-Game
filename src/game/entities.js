@@ -98,6 +98,24 @@ export class MovingPlatform extends Entity {
     this.dy = ny - this.y;
     this.x = nx; this.y = ny;
   }
+
+  /**
+   * Yörünge saatini belirli bir ana taşır — SAHTE dx/dy üretmeden.
+   *
+   * Konum saf bir `animTime` fonksiyonu olduğu için platform tam olarak
+   * geri sarılabiliyor. Misafirin uzlaştırması bunu kullanıyor: bekleyen
+   * girdiler yeniden oynatılırken platform da o karelerdeki yerinde
+   * olmalı (bkz. snapshot.js → replayPending). `animTime`'ı elle set edip
+   * `update` çağırmak olmazdı: `dx` bir önceki konuma göre hesaplandığı
+   * için ilk karede kocaman sahte bir sıçrama üretirdi.
+   */
+  seek(animTime) {
+    this.animTime = animTime;
+    const t = animTime * this.speed + this.phase;
+    this.x = this.startX + Math.sin(t) * this.rangeX;
+    this.y = this.startY + Math.sin(t) * this.rangeY;
+    this.dx = 0; this.dy = 0;
+  }
 }
 
 /* ==========================================================================
