@@ -14,41 +14,41 @@ export const SCRIPT = {
 
   /* ---------- AÇILIŞ ---------- */
   intro: {
-    c1: 'Bazı yollar, tek başına yürümek için fazla uzundur.',
-    c2: 'Karanlık ormanların, eski surların ve ateşin ötesinde...',
-    c3: '{hero} bir hazine değil, yolu paylaşacağı kişiyi arıyordu.',
+    c1: 'Her büyük görev, masaya serilen bir haritayla başlar.',
+    c2: 'Fakat bazı rotaların yönü haritalarda değil, sadece tek bir kişide bulunur.',
+    c3: 'Canavarlar yenilebilir, kaleler aşılabilir...\nFakat hiçbir kahraman tek başına efsane olamaz.',
     c4: '{target}',
-    c5: 'Önümüzde bir ejderha var. Ama bu hikâyeyi tek başıma yazmak istemiyorum.',
-    c6: 'Bu maceraya benimle gelir misin?'
+    c5: 'Bunca yolu ve zorluğu tek başıma aştım. Ama bundan sonrasını yalnız yürümek istemiyorum.',
+    c6: 'Eğer hazırsan... Geriye kalan tüm rotaları birlikte çizelim.'
   },
 
   /* ---------- FİNAL: SORU ---------- */
   ask: {
-    c1: 'Ejderha sustu. Üç diyarın kapıları ardımızda kaldı.',
-    c2: 'Fakat {hero}, yol boyunca taşıdığı asıl sırrı hâlâ söylemedi.',
-    c3: 'Toplanan her kalp, bu tek cümleye giden yolu aydınlattı.',
+    c1: 'Ejderha düştü. Büyük kapılar açıldı. Verilen görev başarıyla tamamlandı.',
+    c2: 'Ama bazı efsanevi görevlerin asıl finali...\nKılıçla ya da zaferle bitmez.',
+    c3: '{hero}, bu yol boyunca aslında tek bir sorunun cevabını arıyordu:\nCesaret bazen ejderhayla savaşmak değil, sadece o tek cümleyi söyleyebilmektir.',
     question: '{question}',
-    optYes: 'Evet, bu maceraya seninle gelmek istiyorum.',
-    optNo: 'Hayır, henüz buna hazır değilim.',
+    optYes: 'Bu yolda seninle yürüyorum.',
+    optNo: 'Şimdilik kamp ateşinde soluklanıp bekleyelim.',
     hintYes: 'Elini tut',
-    hintNo: 'Geri çekil'
+    hintNo: 'Mevcut pozisyonu koru'
   },
 
   /* ---------- FİNAL: KABUL ---------- */
   yes: {
-    c1: 'Ve o anda, bütün yollar aynı ufukta buluştu.',
-    c2: 'İki yolcu, yeni maceralarının ilk gün batımını birlikte izledi.',
-    c3: '{target} & {hero}',
-    c4: 'Bu hikâye burada bitmiyor. Tam burada, birlikte başlıyor.'
+    c1: 'Bazen bir maceradaki en büyük ödül...\nSandığın içindeki altınlar ya da hazineler değildir.',
+    c2: 'Tüm tehlikelere rağmen senin yanında yürümeyi seçen kişidedir.',
+    c3: '{hero} ❤️ {target}',
+    c4: '🏆 Yeni Bölüm Açıldı:\nİkimizin Hikâyesi'
   },
 
   /* ---------- FİNAL: RET ---------- */
   no: {
-    c1: 'Tam o sırada ejderha yeniden nefes aldı.',
-    c2: 'Meğer yenilmemiş; yalnızca cevabı dinliyormuş.',
-    c3: 'Görünüşe göre bu finali beğenmedi...',
-    c4: 'Neyse ki kahramanların bir canı daha var.',
-    retry: 'Hikâyeyi geri sar'
+    c1: 'Hmm... Devrilen ejderha birden gözlerini açtı.',
+    c2: 'Bu beklenmedik cevabı sanırım o bile öngörememişti.',
+    c3: 'Ama en efsanevi hikâyeler bazen ilk denemede tek atışta bitmez.',
+    c4: '[ İLERLEME KAYDEDİLMEDİ ]',
+    retry: '🔄 Son Kontrol Noktasına Dön'
   }
 };
 

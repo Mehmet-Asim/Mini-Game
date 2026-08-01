@@ -356,7 +356,7 @@ export const introScene = {
     { t: 1.8,  dur: 4.6, text: S.intro.c1, pos: 'bottom', style: 'whisper', typeDur: 0.72 },
     { t: 6.8,  dur: 5.0, text: S.intro.c2, pos: 'bottom', style: 'whisper', typeDur: 0.78 },
     { t: 12.4, dur: 4.4, text: S.intro.c3, pos: 'bottom', style: 'normal', typeDur: 0.85 },
-    { t: 20.6, dur: 3.4, text: S.intro.c4, speaker: '{hero}', pos: 'center', style: 'hero', typeDur: 0.48 },
+    { t: 20.6, dur: 3.4, text: S.intro.c4, speaker: '{hero}', pos: 'bottom', style: 'normal', typeDur: 0.48 },
     { t: 23.2, dur: 4.4, text: S.intro.c5, speaker: '{hero}', pos: 'bottom', style: 'normal', typeDur: 0.82 },
     /* 'hero' stili tek kelimelik/isim gibi KISA vurgular için (bkz. c4);
        burada tam bir cümle olduğu için o boyutta (46px, 3 satır) aniden
