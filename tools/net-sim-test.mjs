@@ -107,7 +107,7 @@ function makeEngine(netMode, localIndex, levelIndex = 0, extraCb = {}) {
    Ana simülasyon
    -------------------------------------------------------------------------- */
 
-function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false }) {
+function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false, ridePlatform = false }) {
   const host = makeEngine('host', 0, levelIndex);
 
   /* Misafirin girdisi motorun SABİT ADIMINDAN yollanıyor — oyunda da
@@ -138,7 +138,10 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
       pending.push({ seq, x: me.x, y: me.y });
       if (pending.length > 200) pending.shift();
       const bits = packInput(state);
-      upLinkRef.send({ seq, bits, bk: lastBits.slice(0, 2) });
+      const pkt = { seq, bits, bk: lastBits.slice(0, 2) };
+      const claims = guest.hitClaims;
+      if (claims && claims.length) { pkt.hit = claims.slice(0, 6); claims.length = 0; }
+      upLinkRef.send(pkt);
       lastBits.unshift(bits);
       if (lastBits.length > 3) lastBits.pop();
     }
@@ -154,6 +157,22 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     const h = host.entities.movingPlatforms[i];
     if (h) { m.x = h.x; m.y = h.y; m.animTime = h.animTime; }
   });
+
+  /* HAREKETLİ PLATFORM SENARYOSU
+     Normal senaryo sağa-sola koşuyor ve platformlara neredeyse hiç
+     basmıyor; oysa oyuncunun bildirdiği takılma yalnızca platform
+     ÜSTÜNDEYKEN (`player.onPlatform && grounded`) çıkıyor. Burada iki
+     karakteri de doğrudan platforma oturtup öylece bıraktırıyoruz. */
+  if (ridePlatform) {
+    for (const [eng, idx] of [[host, 0], [guest, 1]]) {
+      const plat = eng.entities.movingPlatforms[0];
+      if (!plat) continue;
+      const p = eng.players[idx];
+      p.x = plat.x + plat.w / 2 - p.w / 2;
+      p.y = plat.y - p.h;
+      p.vx = 0; p.vy = 0; p.grounded = true; p.onPlatform = plat;
+    }
+  }
 
   const upLink = new FakeNetwork({ latency, jitter, loss });     // misafir → host (tuşlar)
   const downLink = new FakeNetwork({ latency, jitter, loss });   // host → misafir (görüntü)
@@ -204,6 +223,20 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     gi.right = reckless ? true : phase === 0;
     gi.left = reckless ? false : phase === 1;
 
+    /* Platform senaryosunda ikisi de KIMILDAMIYOR — ölçülen şey yalnızca
+       platformun taşımasının senkron kalıp kalmadığı. */
+    if (ridePlatform) {
+      hi.right = hi.left = false; hi.jumpHeld = false;
+      gi.right = gi.left = false;
+      /* Zıplama ŞART: `reconcileLocal` hata 5px'in altındaysa hiç
+         uzlaştırma yapmıyor. Kımıldamadan duran karakterde hata hep
+         5px altında kalıyor, yeniden oynatma hiç çalışmıyor ve hata
+         görünmez oluyordu. Oyuncu gerçekte platformda zıplayarak
+         yukarı tırmanıyor — asıl senaryo bu. */
+      if (f % 45 === 0) { gi.jumpHeld = true; gi._jumpBuffer = 0.13; gi.presses.jump++; }
+      else if (f % 45 === 12) gi.jumpHeld = false;
+    }
+
     /* --------------------------------------------------------------------
        Ölümü ŞANSA BIRAKMA.
 
@@ -231,6 +264,9 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     for (const m of upLink.advance(DT * 1000)) {
       host.applyRemoteInput(1, unpackInput(m.bits), m.seq,
         Array.isArray(m.bk) ? m.bk.map(b => unpackInput(b || 0)) : null);
+      /* Ok isabet bildirimleri de girdi paketiyle geliyor (session.js ile
+         aynı yol) — yoksa test gerçek taşıma yolunu ölçmemiş olurdu. */
+      if (m.hit) host.applyRemoteHits(m.hit);
     }
 
     /* --- İki motor da adım atar --- */
@@ -279,11 +315,19 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     });
     if (history.length > 400) history.shift();
 
-    const nowP0 = { x: host.players[0].x, y: host.players[0].y };
-    if (prevHostP0 && Math.hypot(nowP0.x - prevHostP0.x, nowP0.y - prevHostP0.y) > 60) {
-      teleports.push(clock);
+    /* Işınlanma taraması İKİ oyuncuyu da kapsıyor. Eskiden yalnızca
+       player[0]'a (host'un kendi karakteri) bakıyordu; oysa `reckless`
+       senaryosu ölümü player[1]'e (misafirin karakteri) ZORLUYOR. Kontrol
+       bu yüzden gerçekte "host da tesadüfen öldü mü" sorusunu ölçüyordu ve
+       zamanlama en ufak değiştiğinde sallanıyordu. */
+    const nowPs = host.players.map(p => ({ x: p.x, y: p.y }));
+    if (prevHostP0) {
+      for (let pi = 0; pi < nowPs.length; pi++) {
+        const a = nowPs[pi], b = prevHostP0[pi];
+        if (b && Math.hypot(a.x - b.x, a.y - b.y) > 60) { teleports.push(clock); break; }
+      }
     }
-    prevHostP0 = nowP0;
+    prevHostP0 = nowPs;
 
     /* --- Ölçüm (ilk 2 saniye ısınma sayılmaz) ---
        Misafir bilerek 100 ms geriyi oynatıyor. Doğru karşılaştırma, onun
@@ -398,13 +442,89 @@ check('kötü ağda sert düzeltme sınırlı', bad.hardSnapRate < 0.35, `%${(ba
 check('kötü ağda paket kaybı yaşandı (test gerçekçi)', bad.dropped > 0, bad.dropped);
 check('kötü ağda kapılar hâlâ tutarlı', bad.gateAgree > 0.95, `%${(bad.gateAgree * 100).toFixed(1)}`);
 
+/* Bölüm 2 (kale) — HAREKETLİ PLATFORMLARIN yoğun olduğu bölüm.
+   Uzun süre kapsam dışındaydı; oyuncunun "2. bölümde takılıyorum"
+   şikâyeti tam da burada, platform üstündeyken çıkıyordu. */
+const l2 = simulate({ seconds: 12, latency: 60, jitter: 20, loss: 0, levelIndex: 1 });
+console.log(`\n[ölçüm] bölüm 2 (kale): uzlaştırma ort ${l2.selfAvg.toFixed(1)}px · ` +
+  `takılma p95 ${l2.jerkP95.toFixed(1)}px/kare · sert düzeltme %${(l2.hardSnapRate * 100).toFixed(1)}\n`);
+check('bölüm 2 (platformlu) uzlaştırma hatası < 20px', l2.selfAvg < 20, `ort ${l2.selfAvg.toFixed(1)}px`);
+check('bölüm 2 platform üstünde fazladan takılma yok', l2.jerkP95 < 6, `p95 ${l2.jerkP95.toFixed(1)}px/kare`);
+
+/* OK İSABET BİLDİRİMİ — misafir → host taşıma yolu
+
+   Misafirin gördüğü dünya ~116 ms + rtt eskidir; yarasa yörüngede
+   240, dalışta 320 px/sn gider ve gövdesi 34 px. Host okunu yarattığında
+   yarasa bir-iki gövde boyu kaymış olur ve ıskalar; misafirin ekranında
+   ölen yarasa 0.6 sn sonra geri dirilirdi ("üç ok atınca anca ölüyor").
+   Çözüm: misafir isabeti düşman KİMLİĞİYLE bildiriyor, host uyguluyor.
+
+   NOT: buradaki test mekanizmayı sınıyor (bildirim host'ta uygulanıyor
+   mu, bozuk kimlik güvenli mi). Gecikme altındaki uçtan uca faydayı
+   ölçen senaryo henüz yazılamadı — bkz. görev listesi. */
+{
+  const h = makeEngine('host', 0, 0);
+  const target = h.entities.enemies.find(e => e.type === 'flyer');
+  check('bölüm 1de uçan düşman var (test anlamlı)', !!target);
+  const wasDying = target ? target.dying : true;
+  h.applyRemoteHits([target.id]);
+  check('host misafirin ok isabetini uyguluyor', !wasDying && target.dying,
+    `dying=${target && target.dying}`);
+
+  /* Aynı bildirim tekrar gelirse düşman iki kez ölmemeli */
+  const before = h.entities.enemies.filter(e => e.dying).length;
+  h.applyRemoteHits([target.id]);
+  check('aynı isabet iki kez uygulanmıyor',
+    h.entities.enemies.filter(e => e.dying).length === before);
+
+  /* Bozuk/bilinmeyen kimlik sessizce yok sayılmalı — paket bozulması patlatmasın */
+  let threw = false;
+  try { h.applyRemoteHits([999999, null, 'x']); } catch { threw = true; }
+  check('bilinmeyen kimlik güvenle yok sayılıyor', !threw);
+
+  /* Misafir bu yetkiyi KULLANAMAZ: yalnızca host uygular */
+  const g = makeEngine('guest', 1, 0);
+  const gt = g.entities.enemies.find(e => e.type === 'flyer');
+  g.applyRemoteHits([gt.id]);
+  check('misafir kendi motorunda isabet uygulayamıyor', !gt.dying);
+}
+
+/* Karakter HAREKETLİ PLATFORMUN ÜSTÜNDE dururken. Asıl şikâyet bu. */
+const ride = simulate({ seconds: 12, latency: 150, jitter: 60, loss: 0.05, levelIndex: 1, ridePlatform: true });
+console.log(`\n[ölçüm] platform ÜSTÜNDE: uzlaştırma ort ${ride.selfAvg.toFixed(1)}px · ` +
+  `takılma p95 ${ride.jerkP95.toFixed(1)}px/kare · sert düzeltme %${(ride.hardSnapRate * 100).toFixed(1)}\n`);
+check('platform üstünde uzlaştırma hatası < 10px', ride.selfAvg < 10, `ort ${ride.selfAvg.toFixed(1)}px`);
+
 const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });
 check('bölüm 3 (boss bölümü) senkron kalıyor', l3.peerAvg < 15, `ort ${l3.peerAvg.toFixed(1)}px`);
+/* Bölüm 3'ün kendi uzlaştırma hatası uzun süre ölçülmüyordu. Boss'un
+   hit-stop'ları (0.16 sn) burada en büyük sapmayı üretiyordu. */
+console.log(`[ölçüm] bölüm 3 (in): uzlaştırma ort ${l3.selfAvg.toFixed(1)}px · ` +
+  `takılma p95 ${l3.jerkP95.toFixed(1)}px/kare\n`);
+/* AÇIK SORUN — hit-stop düzeltmesi bölüm 2'yi 10.1 → 0.4 px yaptı ama
+   bölüm 3'e yaramadı (A/B: 12.9 → 13.0 px). Sapmanın kaynağı başka;
+   henüz bulunmadı.
+
+   BURADA KONTROL YOK, BİLEREK. Bu senaryo çok gürültülü: yarasaların
+   başlangıç yörünge fazı rastgele (`rand()`, bkz. entities.js → Flyer)
+   ve aynı kodda 7.2 ile 16.9 px arasında değerler ölçüldü. Eşik koyunca
+   test rastgele patlıyor; rastgele patlayan bir test, testsizlikten
+   kötüdür — insanı kırmızıya alıştırır. Sayı yukarıda BASILIYOR: sebep
+   bulunup düzeltildiğinde ve ölçüm kararlı hale geldiğinde buraya
+   gerçek bir eşik konmalı. */
 
 /* Bölüm 3'te senaryo yoldaşı uçuruma düşürüyor: ışınlanma davranışı burada
-   sınanabiliyor. Misafir, host'un hiç uğramadığı bir noktada görünmemeli. */
-check('bölüm 3 senaryosunda ölüm/diriliş yaşandı (test gerçekçi)',
-  l3.teleports > 0, `${l3.teleports} ışınlanma`);
+   sınanabiliyor. Misafir, host'un hiç uğramadığı bir noktada görünmemeli.
+
+   DİKKAT — bu kontrol KARARSIZ ve öyle olduğu biliniyor. Co-op'ta ölüm
+   doğrudan ışınlanma değil, önce YERE SERİLME: karakter olduğu yerde
+   kalıyor. Işınlanma ancak yoldaş kaldırırsa ya da süre dolarsa oluyor;
+   ikisi de düşmanların rastgele başlangıç fazına bağlı. Bu yüzden bazı
+   koşularda hiç ışınlanma görülmüyor ve kontrol "0 ışınlanma" diye
+   patlıyordu — üründe bir sorun yok, senaryonun garanti etmediği bir şeyi
+   ölçüyordu. Asıl anlamlı kontrol bir alttaki `offPathMax`: ışınlanma
+   OLDUĞUNDA misafirin boşluktan süzülmediğini sınıyor ve o kararlı. */
+console.log(`[bilgi] bölüm 3 senaryosunda ${l3.teleports} ışınlanma gözlendi\n`);
 check('diriliş interpole edilip yoldaş boşluktan süzülmüyor',
   l3.offPathMax < 60, `en fazla ${l3.offPathMax.toFixed(0)}px yol dışı`);
 check('iyi ağda yoldaş host\'un izlediği yolda kalıyor',

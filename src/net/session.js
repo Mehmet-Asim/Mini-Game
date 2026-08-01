@@ -196,6 +196,8 @@ export class CoopSession {
       this.stats.received++;
       this.engine.applyRemoteInput(this.remoteIndex, unpackInput(m.bits || 0), m.seq || 0,
         Array.isArray(m.bk) ? m.bk.map(b => unpackInput(b || 0)) : null);
+      /* Misafirin ok isabetleri — bkz. engine.js → applyRemoteHits */
+      if (m.hit) this.engine.applyRemoteHits(m.hit);
     }));
 
     /* Host'tan gelen anlık görüntü → misafirin tamponuna */
@@ -406,7 +408,19 @@ export class CoopSession {
       const bits = packInput(state);
       /* Yedeklilik: son iki girdinin bitleri de gidiyor. Bir paket
          kaybolursa girdi kaybolmuyor, bir sonrakinin içinde geliyor. */
-      const ok = this.net.send(MSG.INPUT, { seq, bits, bk: this._lastBits.slice(0, 2) });
+      /* Ok isabet bildirimleri girdi paketine İLİŞTİRİLİYOR: ayrı bir mesaj
+         tipi açmak yerine aynı sıralama ve hız sınırını paylaşıyorlar.
+         Kuyruk gönderilince boşaltılıyor — tekrar yollamak düşmanı iki kez
+         vurmaya çalışmak olurdu (host tarafı `dying` ile korunuyor ama
+         boşuna trafik). Paket kaybolursa isabet düşer; bu, bugünkü
+         davranıştan kötü değil. */
+      const claims = this.engine.hitClaims;
+      const payload = { seq, bits, bk: this._lastBits.slice(0, 2) };
+      if (claims && claims.length) {
+        payload.hit = claims.slice(0, 6);
+        claims.length = 0;
+      }
+      const ok = this.net.send(MSG.INPUT, payload);
       this._lastBits.unshift(bits);
       if (this._lastBits.length > 3) this._lastBits.pop();
       if (ok) this.stats.sent++;

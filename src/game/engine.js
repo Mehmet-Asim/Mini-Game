@@ -103,6 +103,23 @@ export class GameEngine {
        -------------------------------------------------------------------- */
     this.netMode = opts.netMode || null;
 
+    /* MİSAFİRİN OK İSABET BİLDİRİMLERİ (misafir doldurur, host uygular)
+
+       Misafirin gördüğü dünya ~116 ms + rtt eskidir (100 ms interpolasyon
+       tamponu + paketin yolu). Misafir okunu ekranda GÖRDÜĞÜ yarasaya
+       nişanlıyor; host ise oku ~rtt/2 SONRA yaratıyor. Yarasa yörüngede
+       240 px/sn, dalışta 320 px/sn gidiyor ve gövdesi 34 px — yani host
+       oku doğduğunda yarasa bir-iki gövde boyu kaymış oluyor ve host'un
+       oku ıskalıyor. Misafir ölümü tahmin ediyor, host onaylamıyor,
+       0.6 sn sonra `revivePredicted` yarasayı geri getiriyor: oyuncunun
+       "üç ok atınca anca ölüyor" dediği şey buydu.
+
+       Çözüm: misafir kendi okunun kimi vurduğunu düşman KİMLİĞİYLE
+       bildiriyor, host da kabul ediyor. Böylece oyuncunun ekranında
+       gördüğü isabet gerçek oluyor. Kimlikler iki tarafta zaten aynı
+       (bkz. net testi: "DÜŞMAN KİMLİKLERİ İKİ TARAFTA AYNI"). */
+    this.hitClaims = [];
+
     /* Bu adımda girdisi gelmediği için simüle edilmeyecek oyuncular */
     this._frozen = new Set();
 
@@ -284,6 +301,9 @@ export class GameEngine {
     this.state = 'playing';
     this.stateTimer = 0;
     this.hitStop = 0;
+    /* Önceki bölümden kalan isabet bildirimleri yeni bölümün düşman
+       kimliklerine denk gelip yanlış düşman öldürebilirdi. */
+    this.hitClaims.length = 0;
 
     if (this.cb.onToast) this.cb.onToast(def.intro, 3400);
     this._emitHud();
@@ -590,11 +610,34 @@ export class GameEngine {
 
     this.camera.update(dt);
 
-    // Hit-stop: kısa donma (vuruş hissi)
+    /* Hit-stop: kısa donma (vuruş hissi)
+
+       TEK KİŞİLİKTE simülasyonu gerçekten donduruyoruz — darbenin ağırlığı
+       buradan geliyor.
+
+       AĞDA DONDURMUYORUZ. Hit-stop yalnızca HOST'ta üretiliyor (kılıç,
+       ezme, temas, boss — hepsi "MİSAFİR BURADA DURUR" satırının altında)
+       ve anlık görüntüde taşınmıyor. Yani host donarken misafir donmuyordu:
+       misafirin karakteri, host'un dondurduğu ~4 kare boyunca ilerlemeye
+       devam edip 330 px/sn hızda ~22 px öne geçiyor, girdi onayı gelince de
+       geri çekiliyordu. Boss'un 0.16 sn'lik donmalarında bu ~53 px'e
+       çıkıyordu.
+
+       Ölçüldü (tools/net-sim-test.mjs, 60 ms gecikme):
+
+           bölüm 1 (orman)            →  0.4 px
+           bölüm 2 (kale)             → 10.1 px   ← düşmanlar çıkarılınca 0.4
+           bölüm 3 (in, boss)         → 13.4 px
+
+       Oyuncunun "2. ve 3. bölümde takılıyorum" dediği şey buydu. Ağda
+       sayaç yalnızca ÇİZİM için işliyor (bkz. renderer, `hitStop`);
+       fizik iki tarafta da kesintisiz akıyor ve senkron bozulmuyor. */
     if (this.hitStop > 0) {
       this.hitStop -= dt;
-      this.particles.update(dt * 0.25);
-      return;
+      if (!this.netMode) {
+        this.particles.update(dt * 0.25);
+        return;
+      }
     }
 
     switch (this.state) {
@@ -881,6 +924,10 @@ export class GameEngine {
         const killed = (en.hp ?? 1) <= 1;
         if (killed) en.markPredictedDead(this.particles);
         else en.hurtFlash = 0.12;
+        /* Host'a bildir: "okum bu düşmanı vurdu". Tahminin geri
+           alınmasını (revivePredicted) önleyen şey bu — bkz. hitClaims. */
+        /* Tavan: bağlantı koptuysa kuyruk sonsuza kadar şişmesin */
+        if (en.id !== undefined && this.hitClaims.length < 16) this.hitClaims.push(en.id);
         ar.consume(this.particles);
         hit = true;
         this.camera.addShake(killed ? 7 : 4);
@@ -1736,6 +1783,34 @@ export class GameEngine {
    * "gecikme × hız" kadar sahte bir hata üretiyor ve karakteri geri
    * sürüklüyordu.
    */
+  /**
+   * MİSAFİRİN OK İSABETLERİNİ UYGULA (yalnızca host)
+   *
+   * Misafirin okları host'un dünyasında, misafirin gördüğünden ~116 ms + rtt
+   * ilerideki düşman konumlarına karşı uçuyor. Hızlı düşmanlarda (yarasa:
+   * yörüngede 240, dalışta 320 px/sn; gövde 34 px) bu fark bir-iki gövde
+   * boyu ettiği için host'un oku ıskalıyordu. Burada misafirin "şu kimliği
+   * vurdum" bildirimini kabul ediyoruz.
+   *
+   * Neden güvenli: `takeHit` zaten `dying` kontrolü yapıyor, yani host'un
+   * kendi oku da tuttuysa düşman iki kez ölmüyor. Kimlikler iki tarafta
+   * aynı. Bu iki kişilik özel bir oyun; hile modeli yok.
+   */
+  applyRemoteHits(ids) {
+    if (this.netMode !== 'host' || !Array.isArray(ids)) return;
+    /* Tavan: bozuk/şişmiş bir paket bütün bölümü süpürmesin */
+    for (const id of ids.slice(0, 6)) {
+      const en = this.entities.enemies.find(e => e.id === id && e.alive && !e.dying);
+      if (!en) continue;
+      const killed = en.takeHit(this.particles);
+      this.camera.addShake(killed ? 7 : 4);
+      if (this.audio) {
+        this.audio.playArrowHit();
+        if (killed) this.audio.playEnemyDeath();
+      }
+    }
+  }
+
   applyRemoteInput(index, state, seq, backfill = null) {
     const inp = this.inputs[index];
     if (inp instanceof RemoteInput) inp.apply(state, seq, backfill);
