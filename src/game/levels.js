@@ -83,8 +83,22 @@ export const LEVELS = [
     ],
 
     /* Hareketli platformlar sağlam zemin üstünde — yüksek kalplere asansör */
+    /* DİKEY PLATFORMLAR SABİTLENDİ (rangeY: 0).
+
+       Ağ üzerinden oynarken misafirin platform saati host'unkinden
+       ayrılabiliyor. Yerinde dururken görünmüyor — platform zemin gibi
+       kelepçeliyor — ama ÜSTÜNDE ZIPLAYINCA kelepçe kalkıyor ve faz farkı
+       iniş karesini kaydırıyor: biri yere basmışken diğeri ~500 px/sn
+       düşüyor, sapma anlık 90-130 px'e çıkıyor. Dört ayrı düzeltme
+       denendi ve ölçülerek elendi (bkz. snapshot.js → applySnapshot ve
+       replayPending yorumları); kalan sorunun çözümü netcode yaması değil.
+
+       Yatay platformlar KALIYOR: onlarda sapma ölçülebilir biçimde
+       düşük. `rangeY: 0` hareketi durduruyor ama platformu yerinde
+       bırakıyor — geometri, çarpışma ve bölüm tasarımı değişmiyor.
+       Geri açmak için değeri 45 yapmak yeterli. */
     moving: [
-      { x: 1480, y: 395, w: 110, rangeY: 45, speed: 1.0 },
+      { x: 1480, y: 395, w: 110, rangeY: 0, speed: 1.0 },
       { x: 3180, y: 425, w: 110, rangeX: 75, speed: 1.05, phase: 0.8 }
     ],
 
@@ -205,10 +219,24 @@ export const LEVELS = [
     ],
 
     /* Hepsi sağlam zemin üstünde */
+    /* DİKEY PLATFORMLAR SABİTLENDİ (rangeY: 0).
+
+       Ağ üzerinden oynarken misafirin platform saati host'unkinden
+       ayrılabiliyor. Yerinde dururken görünmüyor — platform zemin gibi
+       kelepçeliyor — ama ÜSTÜNDE ZIPLAYINCA kelepçe kalkıyor ve faz farkı
+       iniş karesini kaydırıyor: biri yere basmışken diğeri ~500 px/sn
+       düşüyor, sapma anlık 90-130 px'e çıkıyor. Dört ayrı düzeltme
+       denendi ve ölçülerek elendi (bkz. snapshot.js → applySnapshot ve
+       replayPending yorumları); kalan sorunun çözümü netcode yaması değil.
+
+       Yatay platformlar KALIYOR: onlarda sapma ölçülebilir biçimde
+       düşük. `rangeY: 0` hareketi durduruyor ama platformu yerinde
+       bırakıyor — geometri, çarpışma ve bölüm tasarımı değişmiyor.
+       Geri açmak için değeri 45 yapmak yeterli. */
     moving: [
-      { x: 460,  y: 395, w: 100, rangeY: 45, speed: 1.1 },
+      { x: 460,  y: 395, w: 100, rangeY: 0, speed: 1.1 },
       { x: 1850, y: 430, w: 110, rangeX: 70, speed: 1.0, phase: 0.6 },
-      { x: 2760, y: 395, w: 100, rangeY: 45, speed: 1.15 }
+      { x: 2760, y: 395, w: 100, rangeY: 0, speed: 1.15 }
     ],
 
     crumble: [
@@ -345,12 +373,26 @@ export const LEVELS = [
     ],
 
     /* Hepsi sağlam zemin üstünde */
+    /* DİKEY PLATFORMLAR SABİTLENDİ (rangeY: 0).
+
+       Ağ üzerinden oynarken misafirin platform saati host'unkinden
+       ayrılabiliyor. Yerinde dururken görünmüyor — platform zemin gibi
+       kelepçeliyor — ama ÜSTÜNDE ZIPLAYINCA kelepçe kalkıyor ve faz farkı
+       iniş karesini kaydırıyor: biri yere basmışken diğeri ~500 px/sn
+       düşüyor, sapma anlık 90-130 px'e çıkıyor. Dört ayrı düzeltme
+       denendi ve ölçülerek elendi (bkz. snapshot.js → applySnapshot ve
+       replayPending yorumları); kalan sorunun çözümü netcode yaması değil.
+
+       Yatay platformlar KALIYOR: onlarda sapma ölçülebilir biçimde
+       düşük. `rangeY: 0` hareketi durduruyor ama platformu yerinde
+       bırakıyor — geometri, çarpışma ve bölüm tasarımı değişmiyor.
+       Geri açmak için değeri 45 yapmak yeterli. */
     moving: [
-      { x: 420,  y: 395, w: 100, rangeY: 45, speed: 1.2 },
-      { x: 910,  y: 395, w: 90, rangeY: 45, speed: 1.25, phase: 0.7 },
+      { x: 420,  y: 395, w: 100, rangeY: 0, speed: 1.2 },
+      { x: 910,  y: 395, w: 90, rangeY: 0, speed: 1.25, phase: 0.7 },
       { x: 1780, y: 435, w: 100, rangeX: 60, speed: 1.15, phase: 1.4 },
       { x: 2900, y: 440, w: 110, rangeX: 75, speed: 1.3 },
-      { x: 3350, y: 395, w: 110, rangeY: 45, speed: 1.35, phase: 0.5 }
+      { x: 3350, y: 395, w: 110, rangeY: 0, speed: 1.35, phase: 0.5 }
     ],
 
     crumble: [

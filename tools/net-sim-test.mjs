@@ -703,7 +703,7 @@ console.log(`\n[ölçüm] DİKEY platformda zıplayıp sağa-sola: ort ${ride.se
    Sertçe hizalamak denendi ve TERS TEPTİ (ort 17.9, p95 75.0): platform
    saniyede 20 kez sıçrayınca üstündeki oyuncu savruluyor. Gerçek çözüm
    muhtemelen `ahead` tahminini gürültüsüzleştirmek. */
-check('dikey platformda zıplarken uzlaştırma hatası gerilemiyor', ride.selfAvg < 14,
+check('dikey platformda zıplarken uzlaştırma hatası < 6px', ride.selfAvg < 6,
   `ort ${ride.selfAvg.toFixed(1)}px`);
 
 const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });

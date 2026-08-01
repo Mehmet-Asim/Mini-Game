@@ -17,7 +17,7 @@ import { CardLayer } from '../cinematic/cards.js';
 import { ChoiceLayer } from '../cinematic/choice.js';
 import { getScene, sceneAfterChoice } from '../cinematic/scenes/index.js';
 import { preloadPixelSprites } from '../cinematic/art/pixelSprites.js';
-import { audioManager } from '../audio.js';
+import { audioManager, MUSIC } from '../audio.js';
 import { S } from '../cinematic/script.js';
 import { createTicker } from '../core/ticker.js';
 
@@ -114,7 +114,13 @@ export function renderCinematicView(container, opts = {}) {
     chomp:          'playDragonDeath'
   };
 
-  if (sceneId.startsWith('outro-')) audioManager.stopTrack(1.2);
+  /* SAHNE MÜZİĞİ
+     Giriş ve final animasyonlarının kendi parçaları var. Final, `outro-ask`
+     ile başlayıp seçim sonrası sahnelerde AKMAYA DEVAM EDİYOR: her sahnede
+     baştan başlatmak, teklifin en can alıcı anında müziği kesip yeniden
+     kurardı (aynı parça çalıyorsa playMusicFile dokunmuyor). */
+  if (sceneId.startsWith('outro-')) audioManager.playMusicFile(MUSIC.finale.url, MUSIC.finale.start);
+  else if (sceneId === 'intro') audioManager.playMusicFile(MUSIC.intro.url, MUSIC.intro.start);
 
   function playCue(name) {
     if (!name || !audioManager) return;

@@ -65,6 +65,11 @@ class AudioEngine {
     this.timers = [];
     this.step = 0;
     this.noiseBuffer = null;
+    /* Dosya müziği (bkz. playMusicFile) */
+    this._musicEl = null;
+    this._musicSrc = null;
+    this._musicUrl = null;
+    this._musicStart = 0;
   }
 
   init() {
@@ -182,16 +187,95 @@ class AudioEngine {
     if (this.enabled) this._runTrack();
   }
 
+  /* ========================================================================
+     DOSYA MÜZİĞİ
+
+     Prosedürel parçalar (osilatörle üretilenler) yerini gerçek kayıtlara
+     bırakıyor. İki nokta önemli:
+
+     · Ses `musicGain` üzerinden geçiyor. Doğrudan `<audio>` elemanından
+       çalmak daha kısa olurdu ama oyunun ses aç/kapa düğmesi ve seviye
+       ayarı bu düğüme bağlı; dışarıdan çalan bir ses kapatılamazdı.
+
+     · Parçalar BAŞINDAN DEĞİL, istenen saniyeden başlıyor (girişleri uzun).
+       `loop = true` döngüde başa saracağı için kapalı; bitişi kendimiz
+       yakalayıp yine o saniyeye dönüyoruz.
+     ======================================================================== */
+  playMusicFile(url, startSec = 0) {
+    this.init();
+    if (!this.ctx) return;
+
+    /* Aynı parça çalıyorsa dokunma: bölüm geçişinde ya da final
+       sahneleri arasında müziği baştan başlatmak sırıtıyordu. */
+    if (this._musicUrl === url && this._musicEl && !this._musicEl.paused) return;
+
+    this._clearTimers();          // prosedürel parçayı durdur
+    this.currentTrack = null;
+    this._stopMusicFile();
+
+    const el = new Audio(url);
+    el.loop = false;              // döngüyü elle yönetiyoruz (başa değil, startSec'e)
+    el.preload = 'auto';
+    el.crossOrigin = 'anonymous';
+
+    const seek = () => { try { el.currentTime = startSec; } catch { /* metadata yok */ } };
+    /* `currentTime` metadata gelmeden yazılamıyor; hazır olunca kuruyoruz. */
+    if (el.readyState >= 1) seek();
+    else el.addEventListener('loadedmetadata', seek, { once: true });
+    el.addEventListener('ended', () => { seek(); el.play().catch(() => {}); });
+
+    try {
+      const src = this.ctx.createMediaElementSource(el);
+      src.connect(this.musicGain);
+      this._musicSrc = src;
+    } catch {
+      /* Bağlanamazsa sessizce vazgeç — oyun müziksiz de oynanır. */
+    }
+
+    this._musicEl = el;
+    this._musicUrl = url;
+    this._musicStart = startSec;
+
+    /* `stopTrack` kısma yapmış olabilir; müzik açıksa seviyeyi geri getir. */
+    if (this.enabled) this.musicGain.gain.setTargetAtTime(0.7, this.ctx.currentTime, 0.3);
+    el.play().catch(() => { /* otomatik oynatma engeli — ilk tıklamada açılır */ });
+  }
+
+  _stopMusicFile() {
+    if (this._musicSrc) { try { this._musicSrc.disconnect(); } catch {} this._musicSrc = null; }
+    if (this._musicEl) { try { this._musicEl.pause(); } catch {} this._musicEl = null; }
+    this._musicUrl = null;
+  }
+
+  /** Dosya müziğini kısarak durdur (sahne geçişleri için). */
+  stopMusicFile(fade = 0.8) {
+    if (!this._musicEl) return;
+    const el = this._musicEl, src = this._musicSrc;
+    this._musicEl = null; this._musicSrc = null; this._musicUrl = null;
+    if (!this.ctx) { try { el.pause(); } catch {} return; }
+    /* Kısma bittikten sonra durdur: `pause()` anında sesi kesip
+       "tık" çıkarıyordu. */
+    this.musicGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, Math.max(0.04, fade * 0.32));
+    setTimeout(() => {
+      try { el.pause(); } catch {}
+      if (src) { try { src.disconnect(); } catch {} }
+    }, Math.max(120, fade * 1000));
+  }
+
   toggle() {
     this.init();
     if (!this.ctx) return false;
     this.enabled = !this.enabled;
     if (this.enabled) {
       this.musicGain.gain.setTargetAtTime(0.7, this.ctx.currentTime, 0.4);
-      this._runTrack();
+      /* Dosya müziği çalıyorsa prosedürel parçayı ÜSTÜNE başlatma —
+         ikisi aynı anda çalınca curcuna oluyordu. */
+      if (this._musicEl) this._musicEl.play().catch(() => {});
+      else this._runTrack();
     } else {
       this.musicGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.25);
       this._clearTimers();
+      if (this._musicEl) { try { this._musicEl.pause(); } catch {} }
     }
     return this.enabled;
   }
@@ -200,8 +284,15 @@ class AudioEngine {
     this.init();
     if (!this.ctx) return;
     this.enabled = v;
-    if (v) { this.musicGain.gain.value = 0.7; this._runTrack(); }
-    else { this.musicGain.gain.value = 0; this._clearTimers(); }
+    if (v) {
+      this.musicGain.gain.value = 0.7;
+      if (this._musicEl) this._musicEl.play().catch(() => {});
+      else this._runTrack();
+    } else {
+      this.musicGain.gain.value = 0;
+      this._clearTimers();
+      if (this._musicEl) { try { this._musicEl.pause(); } catch {} }
+    }
   }
 
   _clearTimers() {
@@ -212,6 +303,8 @@ class AudioEngine {
   stopTrack(fade = 0.8) {
     this._clearTimers();
     this.currentTrack = null;
+    /* Sahne "müziği kes" dediğinde dosya müziği de susmalı. */
+    if (this._musicEl) { this.stopMusicFile(fade); return; }
     if (!this.ctx || !this.musicGain) return;
     this.musicGain.gain.setTargetAtTime(0.0001, this.ctx.currentTime, Math.max(0.04, fade * 0.32));
   }
@@ -594,3 +687,22 @@ class AudioEngine {
 }
 
 export const audioManager = new AudioEngine();
+
+/* ==========================================================================
+   MÜZİK PARÇALARI
+
+   Parçaların girişleri uzun; hepsi istenen saniyeden başlıyor ve döngüde
+   yine oraya dönüyor (başa değil — bkz. playMusicFile).
+
+   `start` değerleri saniye cinsinden ve tek yerden ayarlanabilir:
+   parça yanlış yerden giriyorsa yalnızca buradaki sayıyı değiştir.
+   ========================================================================== */
+export const MUSIC = {
+  /* Giriş animasyonu */
+  intro:  { url: 'music/muzik-3.mp3', start: 50 },
+  /* Tüm savaş bölümleri — bölüm değişince baştan başlamıyor, akmaya
+     devam ediyor (kesip yeniden başlatmak geçişte sırıtıyordu). */
+  battle: { url: 'music/muzik-4.mp3', start: 80 },
+  /* Final animasyonu (outro sahneleri) */
+  finale: { url: 'music/muzik-6.mp3', start: 85 }
+};

@@ -4,7 +4,7 @@
 
 import { GameEngine } from '../game/engine.js';
 import { LEVELS } from '../game/levels.js';
-import { audioManager } from '../audio.js';
+import { audioManager, MUSIC } from '../audio.js';
 import { attachNetDebug } from './netDebug.js';
 
 const LEVEL_TITLES = ['I · Karanlık Orman', 'II · Kale Surları', 'III · Ejderha İni'];
@@ -348,7 +348,7 @@ export function renderGameView(container, config, onComplete, opts = {}) {
     },
 
     onBossStart() {
-      audioManager.playTrack('boss');
+      /* Boss için ayrı parça istenmedi: savaş müziği kesintisiz akıyor. */
       showBanner(overlay, 'VHAERIX', 'Kızıl Ejderha uyandı', 'boss');
     },
 
@@ -365,7 +365,7 @@ export function renderGameView(container, config, onComplete, opts = {}) {
       const nextIdx = idx + 1;
       opts.session?.setPhase?.('game', nextIdx);
       showLevelTransition(overlay, nextIdx, () => {
-        audioManager.playTrack(LEVELS[nextIdx].theme);
+        audioManager.playMusicFile(MUSIC.battle.url, MUSIC.battle.start);
         /* MİSAFİR BÖLÜMÜ KENDİ YÜKLEMEZ.
            Yükleme tek yetkiliye bağlı: host yükleyince `rs` sayacı artıyor
            ve misafir onu görüp yüklüyor (bkz. snapshot.js). İki taraf ayrı
@@ -451,7 +451,9 @@ export function renderGameView(container, config, onComplete, opts = {}) {
   const netDebug = attachNetDebug(frame, engine, opts.session || null);
 
   const startLevel = engine.levelIndex;
-  audioManager.playTrack(LEVELS[startLevel].theme);
+  /* Tüm savaş bölümlerinde aynı parça. Prosedürel tema müziğinin yerini
+     alıyor; bölüm geçişinde kesilmiyor (bkz. audio.js → MUSIC.battle). */
+  audioManager.playMusicFile(MUSIC.battle.url, MUSIC.battle.start);
   engine.start(startLevel);
 
   return () => {
