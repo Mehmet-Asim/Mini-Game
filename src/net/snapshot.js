@@ -103,7 +103,10 @@ export function serializeSnapshot(eng, tick) {
     })),
     ar: e.arrows.map(a => ({
       x: r1(a.x), y: r1(a.y), vx: r1(a.vx), vy: r1(a.vy),
-      s: a.stuck ? 1 : 0, an: r2(a.angle), st: r2(a.stuckTimer)
+      s: a.stuck ? 1 : 0, an: r2(a.angle), st: r2(a.stuckTimer),
+      /* Sahibi: misafir KENDİ tahmini okunu host'un onayladığı gerçek okla
+         eşleştirip düşürebilsin diye (bkz. applySnapshot altında reconcile). */
+      o: a.ownerIndex ?? 0
     })),
 
     /* Toplananlar — bit maskesi. 19 kalp için 19 bit, tek sayıya sığıyor. */
@@ -384,7 +387,16 @@ export function applySnapshot(eng, snap, localIndex = 1) {
   }
   e.enemies = e.enemies.filter(en => en.alive);
 
-  /* --- Mermiler / oklar: listeyi host'unkine eşitle --- */
+  /* --- Mermiler / oklar: listeyi host'unkine eşitle ---
+     `e.arrows` host'un GERÇEK (~100-250ms geriden gelen) verisi; misafirin
+     KENDİ oku bunun yerine `e.predictedArrows`'ta gerçek zamanlı simüle
+     ediliyor (bkz. engine.js) ve render bunu ownerIndex'e göre ayırıyor
+     (bkz. renderer.js). İkisi arasında EL DEĞİŞTİRME yapılmıyor: host'un
+     verisi tampon gecikmesi kadar geride olduğu için tahminden ona geçmek
+     okun aniden GERİYE sıçramasına yol açıyordu (ölçüldü: ~150px). Tahmini
+     ok kendi fiziğiyle (aynı kod, aynı seviye geometrisi) doğal ömrünü
+     tamamlıyor; host'un versiyonu yalnızca dünyanın gerçek defterini tutmak
+     için var, misafirin ekranında hiç görünmüyor. */
   syncList(e.projectiles, snap.pr, hydrateProjectile);
   syncList(e.arrows, snap.ar, hydrateArrow);
 
@@ -512,6 +524,7 @@ function hydrateArrow(o, s) {
   o.angle = Number.isFinite(s.an) ? s.an : Math.atan2(s.vy ?? 0, s.vx ?? 1);
   o.stuckTimer = Number.isFinite(s.st) ? s.st : 0;
   o.dir = (s.vx ?? 0) < 0 ? -1 : 1;
+  o.ownerIndex = s.o ?? 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -842,6 +855,29 @@ function blend(a, b, t, spanMs = 1000 / NET.SNAPSHOT_HZ) {
     if (pa.s !== pb.s && (pa.s === 'dead' || pb.s === 'dead')) return pb;
     if (teleported(pa.x, pa.y, pb.x, pb.y)) return pb;
     return { ...pb, x: lerp(pa.x, pb.x), y: lerp(pa.y, pb.y) };
+  });
+
+  /* --------------------------------------------------------------------
+     OKLAR VE MERMİLER — konum burada da harmanlanmalı.
+
+     Eskiden bu iki liste harmanlamaya HİÇ girmiyordu: `out = {...b}` onları
+     olduğu gibi bırakıyor, yani konumları 20 Hz'lik ham anlık görüntüden
+     BİREBİR geliyordu — 60 Hz render'da her ~50ms'de bir görünür bir sıçrama
+     (ok hızında ~33px). Oyuncunun "ok atışı sarsıntılı/bozuk" dediği şeyin
+     büyük kısmı buydu. Kimlik eşleşmesi yok (kısa ömürlü nesneler, ekstra
+     alan taşımanın maliyeti yok); index'e göre eşleştirip TELEPORTED eşiğini
+     aşan sıçramaları (bir okun tükenip yerine bambaşka birinin gelmesi gibi)
+     olduğu gibi bırakıyoruz. */
+  out.pr = b.pr.map((pb, i) => {
+    const pa = a.pr[i];
+    if (!pa || teleported(pa.x, pa.y, pb.x, pb.y)) return pb;
+    return { ...pb, x: lerp(pa.x, pb.x), y: lerp(pa.y, pb.y) };
+  });
+
+  out.ar = b.ar.map((ab, i) => {
+    const aa = a.ar[i];
+    if (!aa || teleported(aa.x, aa.y, ab.x, ab.y)) return ab;
+    return { ...ab, x: lerp(aa.x, ab.x), y: lerp(aa.y, ab.y) };
   });
 
   const idx = new Map(a.en.map(e => [e.i, e]));

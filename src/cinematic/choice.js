@@ -77,10 +77,17 @@ export class ChoiceLayer {
       this.el = wrap;
 
       const typed = wrap.querySelector('.cine-choice-typed');
+      const untyped = wrap.querySelector('.cine-untyped');
       let reveal = 0;
       this.typingTimer = setInterval(() => {
         reveal = Math.min(choice.question.length, reveal + 1);
         typed.textContent = choice.question.slice(0, reveal);
+        /* Kalan (henüz yazılmamış) kısmı SADECE kalan karakterlerle
+           güncelle. Eskiden bu span hep TAM soruyu tutuyordu; yazma
+           bitince ekranda görünen metnin yanında görünmez bir KOPYASI
+           daha kalıyor, text-align:center bu ikisini birden ortalayınca
+           görünen kısım sola kayıyordu ("kapanış metni ortada değil"). */
+        untyped.textContent = choice.question.slice(reveal);
         if (reveal < choice.question.length) return;
         clearInterval(this.typingTimer);
         this.typingTimer = null;

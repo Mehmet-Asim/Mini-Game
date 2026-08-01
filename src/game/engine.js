@@ -171,6 +171,12 @@ export class GameEngine {
     return {
       enemies: [], hearts: [], lifeOrbs: [], checkpoints: [],
       movingPlatforms: [], crumbles: [], spikes: [], projectiles: [], arrows: [],
+      /* Misafirin KENDİ okunun anında görünmesi için tahmini kopyası.
+         `arrows` tamamen host'un anlık görüntüsünden geliyor (bkz. syncList);
+         oraya pushlanan bir ok host onaylamadan ÖNCE gelen bir sonraki
+         anlık görüntüyle anında silinirdi — okun hiç görünmediği bug buydu.
+         Bkz. snapshot.js → applySnapshot (reconciliation). */
+      predictedArrows: [],
       plates: [], gates: [], coopLifts: [],
       shieldPickup: null, portal: null
     };
@@ -460,6 +466,10 @@ export class GameEngine {
       player: this.player,
       players: this.players,
       localIndex: this.localIndex,
+      /* Misafirde kendi okum `entities.predictedArrows`'tan çiziliyor;
+         `entities.arrows` içindeki (tampon gecikmeli) kopyasının aynı anda
+         çizilmemesi gerek — bkz. renderer.js. */
+      guestMode: this.netMode === 'guest',
       entities: this.entities,
       particles: this.particles,
       boss: this.boss,
@@ -638,7 +648,19 @@ export class GameEngine {
       if (p.pendingArrow) {
         const arrow = new Arrow(p.pendingArrow);
         arrow.ownerIndex = i;
-        e.arrows.push(arrow);
+        if (guest) {
+          /* Misafirde `e.arrows` host'un anlık görüntüsünün MÜLKÜ —
+             syncList her karede onu host'un listesiyle eşitliyor. Buraya
+             pushlarsak host henüz haberdar olmadığı için bir sonraki
+             (henüz bu oku içermeyen) anlık görüntü onu aynı kare içinde
+             silerdi — ok hiç görünmeden yok oluyordu. Ayrı bir listede
+             tutup GERÇEK ZAMANLI kendimiz ilerletiyoruz; host'un (tampon
+             gecikmeli) versiyonuna hiç el değiştirmiyoruz — bkz. renderer.js
+             ve snapshot.js'teki notlar. */
+          e.predictedArrows.push(arrow);
+        } else {
+          e.arrows.push(arrow);
+        }
         p.pendingArrow = null;
         this.camera.addShake(3);
       }
@@ -670,6 +692,16 @@ export class GameEngine {
       for (const en of e.enemies) en.tickVisuals(dt, this.particles);
       e.enemies = e.enemies.filter(x => x.alive);
       if (this.boss?.alive) this.boss.tickVisuals(dt);
+
+      /* Tahmini oklarımı KENDİM ilerletiyorum — aynı Arrow sınıfı, aynı
+         seviye geometrisi, host'la aynı fizik. Kendi doğal ömrünü
+         (menzil/duvara saplanma/süre dolması) yaşayıp öyle kayboluyor;
+         host'un versiyonuna hiç el değiştirmiyor (bkz. snapshot.js). */
+      for (const ar of e.predictedArrows) {
+        if (ar.alive) ar.update(dt, ctx);
+      }
+      e.predictedArrows = e.predictedArrows.filter(x => x.alive);
+
       this._stepTipsAndCamera(dt);
       return;
     }

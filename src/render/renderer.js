@@ -177,6 +177,14 @@ export class Renderer {
 
     /* ---- 7b. Oklar ---- */
     for (const ar of (entities.arrows || [])) {
+      /* Misafirde KENDİ okum ayrı bir listeden (predictedArrows, aşağıda)
+         gerçek zamanlı çiziliyor; buradaki host kopyası ~100-250ms geride
+         olduğu için ikisini birden çizmek çift ok / geriye sıçrama olarak
+         görünürdü (bkz. engine.js ve snapshot.js'teki notlar). */
+      if (state.guestMode && ar.ownerIndex === state.localIndex) continue;
+      if (cam.isVisible(ar.x, ar.y, 80)) drawArrow(ctx, ar, cam);
+    }
+    for (const ar of (entities.predictedArrows || [])) {
       if (cam.isVisible(ar.x, ar.y, 80)) drawArrow(ctx, ar, cam);
     }
 
