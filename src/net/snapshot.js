@@ -494,6 +494,14 @@ export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DE
        Eşik dalgalanma bandının üstünde kalmalı; normalde yumuşak sürükleme
        çalışır, sert hizalama yalnızca gerçek kopukluklar için devreye
        girer (bölüm açılışı, sekme, duraklama sonrası). */
+    /* Sapma küçükken saate dokunmuyoruz; her pakette zorlamak hareketi
+       mikro-sıçratıyor. DENENDİ VE TERS TEPTİ (hepsi ölçülerek):
+         · eşiği sıkılaştırmak (0.06/0.18)  → saniyede 20 mikro sıçrama
+         · kesin `ak.mt` hedefine yakınsamak → ort 11.9 → 16.5 px
+         · düzeltmeyi biniciye taşıtmak      → p95 45 → 67 px
+       Ortak sebep: her düzeltme platformu oynatıyor, üstündeki oyuncu
+       savruluyor. Kalan sorun bu; çözümü saati daha iyi kovalamak
+       DEĞİL (bkz. aşağıdaki not ve replayPending). */
     if (Math.abs(drift) > 0.25) m.animTime = want;
     else m.animTime += drift * 0.12;                     // yumuşak sürükle
   });
