@@ -572,11 +572,14 @@ export class GameEngine {
              girdilerini yeniden oynatacak (bkz. snapshot.js → replayPending).
              Yalnızca konumla geri dönmek yörüngeyi bozardı — havadayken
              düşme hızı sıfırlanır, koşarken ivme kaybolurdu. */
-          this.remoteAck = {
+          const ack = {
             seq: consumed.seq,
             x: Math.round(p.x), y: Math.round(p.y),
             vx: Math.round(p.vx), vy: Math.round(p.vy)
           };
+          if (p.hurtTimer > 0) ack.ht = Math.round(p.hurtTimer * 100) / 100;
+          if (p.invuln > 0) ack.iv = Math.round(p.invuln * 100) / 100;
+          this.remoteAck = ack;
         } else {
           /* GİRDİ YOK → BU OYUNCUYU BU ADIMDA SİMÜLE ETME.
              Son tuşu tutup fizik işletmek, host'a misafirin atmadığı fazladan
@@ -769,6 +772,64 @@ export class GameEngine {
       if (me && !me.dead && me.y > this.level.deathY) {
         me.y = this.level.deathY;
         me.vy = 0;
+      }
+
+      /* ================================================================
+         TEMAS HASARI VE ETKİLEŞİM ÖNGÖRÜSÜ — diken, düşman, mermi, boss
+
+         Hasar kararı (can eksiltme, yere serilme, ölüm) hâlâ host'ta.
+         Burada yalnızca FİZİK TEPKİSİ (zıplama/bounce, siper/block, geri
+         tepme + dokunulmazlık) öngörülüyor ki misafirin tahmini host'unkiyle
+         aynı yörüngede kalsın. Artık remoteAck üzerinden hurtTimer ve
+         invuln senkronize edildiği için öngörülebilirlik güvenceye alındı.
+         ================================================================ */
+      if (me && !me.dead && !me.downed) {
+        const tryBlock = (fromX) => {
+          if (!me.blocking || me.blockAmount < 0.5) return false;
+          me.blockHit(fromX, null, null);
+          return true;
+        };
+        /* --- Düşmanlar --- */
+        for (const en of e.enemies) {
+          if (!en.alive || en.dying) continue;
+          if (!en.overlapsPlayer(me)) continue;
+          const stomping = en.stompable && me.vy > 60 &&
+                           (me.bottom - me.vy * dt) <= en.y + 12;
+          if (stomping) {
+            me.bounce();
+          } else if (!tryBlock(en.cx)) {
+            me.hurt(en.cx, null, null);
+          }
+        }
+        /* --- Dikenler --- */
+        for (const sp of e.spikes) {
+          if (sp.hitsPlayer(me)) {
+            if (me.hurt(me.cx, null, null)) {
+              me.vy = -420;
+            }
+          }
+        }
+        /* --- Mermiler --- */
+        for (const pr of e.projectiles) {
+          if (!pr.alive || pr.deflected) continue;
+          if (!aabb(pr.x, pr.y, pr.w, pr.h, me.x, me.y, me.w, me.h)) continue;
+          if (!tryBlock(pr.cx)) {
+            me.hurt(pr.cx, null, null);
+          }
+        }
+        /* --- Boss --- */
+        if (this.boss && this.boss.alive && !this.boss.dying) {
+          const stompHead = this.boss.vulnerable && me.vy > 60 &&
+            aabb(me.x, me.y + me.h - 12, me.w, 16,
+                 this.boss.headBox.x, this.boss.headBox.y, this.boss.headBox.w, 26);
+          if (stompHead) {
+            me.bounce(-620);
+          } else if (this.boss.hitsPlayer(me)) {
+            if (!tryBlock(this.boss.cx)) {
+              me.hurt(this.boss.cx, null, null);
+            }
+          }
+        }
       }
 
       this._stepTipsAndCamera(dt);

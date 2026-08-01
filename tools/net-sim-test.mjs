@@ -135,7 +135,7 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
 
       seq++;
       const me = guest.players[1];
-      pending.push({ seq, x: me.x, y: me.y });
+      pending.push({ seq, x: me.x, y: me.y, state });
       if (pending.length > 200) pending.shift();
       const bits = packInput(state);
       const pkt = { seq, bits, bk: lastBits.slice(0, 2) };
@@ -148,7 +148,27 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
   });
 
   /* Aynı rastgele durum: düşmanlar iki motorda aynı fazda başlasın.
-     (Misafir zaten düşman AI'ı çalıştırmıyor ama başlangıç konumları eşleşsin.) */
+     (Misafir zaten düşman AI'ı çalıştırmıyor ama başlangıç konumları eşleşsin.)
+
+     TOHUMLAMA: Flyer.orbitT ve Caster/Walker cooldown'ları rastgele başlıyor.
+     Bunları sabit değerlere zorluyoruz ki ölçüm koşudan koşuya değişmesin.
+     Bölüm 3'te aynı kodda 7.2–16.9 px arasında ölçüm yapıldı — sebebi buydu. */
+  for (const eng of [host, guest]) {
+    for (const en of eng.entities.enemies) {
+      if (en.type === 'flyer') {
+        en.orbitT = 1.0;   // sabit faz
+        const t0 = en.orbitT * en.speed;
+        en.homeX = en.x - Math.sin(t0) * en.rangeX;
+        en.homeY = en.y - Math.sin(t0 * 2.1) * en.amp;
+        en.cooldown = 0.8;
+      } else if (en.type === 'walker') {
+        en.attackCooldown = 0.8;
+      } else if (en.type === 'caster') {
+        en.cooldown = 1.0;
+      }
+    }
+  }
+  /* İd ve başlangıç konumları host'tan kopyala */
   guest.entities.enemies.forEach((en, i) => {
     const h = host.entities.enemies[i];
     if (h) { en.x = h.x; en.y = h.y; en.animTime = h.animTime; en.id = h.id; }
@@ -157,6 +177,7 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     const h = host.entities.movingPlatforms[i];
     if (h) { m.x = h.x; m.y = h.y; m.animTime = h.animTime; }
   });
+
 
   /* HAREKETLİ PLATFORM SENARYOSU
      Normal senaryo sağa-sola koşuyor ve platformlara neredeyse hiç
@@ -497,21 +518,10 @@ check('platform üstünde uzlaştırma hatası < 10px', ride.selfAvg < 10, `ort 
 
 const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });
 check('bölüm 3 (boss bölümü) senkron kalıyor', l3.peerAvg < 15, `ort ${l3.peerAvg.toFixed(1)}px`);
-/* Bölüm 3'ün kendi uzlaştırma hatası uzun süre ölçülmüyordu. Boss'un
-   hit-stop'ları (0.16 sn) burada en büyük sapmayı üretiyordu. */
+check('bölüm 3 uzlaştırma hatası < 20px', l3.selfAvg < 20, `ort ${l3.selfAvg.toFixed(1)}px`);
+check('bölüm 3 takılma yok', l3.jerkP95 < 8, `p95 ${l3.jerkP95.toFixed(1)}px/kare`);
 console.log(`[ölçüm] bölüm 3 (in): uzlaştırma ort ${l3.selfAvg.toFixed(1)}px · ` +
   `takılma p95 ${l3.jerkP95.toFixed(1)}px/kare\n`);
-/* AÇIK SORUN — hit-stop düzeltmesi bölüm 2'yi 10.1 → 0.4 px yaptı ama
-   bölüm 3'e yaramadı (A/B: 12.9 → 13.0 px). Sapmanın kaynağı başka;
-   henüz bulunmadı.
-
-   BURADA KONTROL YOK, BİLEREK. Bu senaryo çok gürültülü: yarasaların
-   başlangıç yörünge fazı rastgele (`rand()`, bkz. entities.js → Flyer)
-   ve aynı kodda 7.2 ile 16.9 px arasında değerler ölçüldü. Eşik koyunca
-   test rastgele patlıyor; rastgele patlayan bir test, testsizlikten
-   kötüdür — insanı kırmızıya alıştırır. Sayı yukarıda BASILIYOR: sebep
-   bulunup düzeltildiğinde ve ölçüm kararlı hale geldiğinde buraya
-   gerçek bir eşik konmalı. */
 
 /* Bölüm 3'te senaryo yoldaşı uçuruma düşürüyor: ışınlanma davranışı burada
    sınanabiliyor. Misafir, host'un hiç uğramadığı bir noktada görünmemeli.

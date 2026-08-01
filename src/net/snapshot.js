@@ -675,38 +675,19 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
   const ex = ak.x - rec.x;
   const ey = ak.y - rec.y;
   const err = Math.hypot(ex, ey);
+  const hurtMismatch = ((ak.ht ?? 0) > 0) !== (p.hurtTimer > 0) || Math.abs((ak.iv ?? 0) - (p.invuln || 0)) > 0.15;
 
-  if (err < 5) return err;          // yuvarlama gürültüsü
+  if (err < 5 && !hurtMismatch) return err;          // yuvarlama gürültüsü ve hasar durumu uyumlu
 
   /* ------------------------------------------------------------------
      YETKİLİ DURUMA DÖN + BEKLEYEN GİRDİLERİ YENİDEN OYNAT
-
-     Eskiden hatanın %35'i güncel konuma ekleniyordu. Bu, hatayı
-     azaltıyordu ama BİTİRMİYORDU: misafir onaydan bu yana bastığı
-     tuşları hesaba katmadığı için, hareket ettiği sürece bir onay
-     gecikmesi kadar geriden düzeltiliyordu.
-
-     Ölçüldü (host kusursuz 60 fps, hasar olayı yok):
-
-         dururken   →  0.0 px
-         KOŞARKEN   → 43.9 px   ← 43.9 / 330 px/sn = 133 ms
-         dururken   →  0.0 px
-
-     43.9 px tam olarak onay gidiş-dönüş süresi kadar yol. Yani hata
-     rastgele değil, düpedüz "kaybolan girdiler" idi.
-
-     Doğrusu şu: host'un onayladığı duruma geri dön, sonra o andan
-     bu yana bastığımız HER tuşu yeniden uygula. Böylece düzeltme
-     oyuncunun girdilerini silmiyor, üzerine yeniden kuruyor.
-
-     Sert ışınlama dalına artık gerek yok: geri tepme, kapı çarpması,
-     ışınlanma zaten `ak` konumuna yansımış oluyor ve yeniden oynatma
-     onu ileri taşıyor.
      ------------------------------------------------------------------ */
   p.x = ak.x;
   p.y = ak.y;
   if (Number.isFinite(ak.vx)) p.vx = ak.vx;
   if (Number.isFinite(ak.vy)) p.vy = ak.vy;
+  p.hurtTimer = ak.ht ?? 0;
+  p.invuln = ak.iv ?? 0;
 
   replayPending(eng, p, pending);
   return err;
