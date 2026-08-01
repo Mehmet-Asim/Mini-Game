@@ -584,6 +584,31 @@ export class GameEngine {
           };
           if (p.hurtTimer > 0) ack.ht = Math.round(p.hurtTimer * 100) / 100;
           if (p.invuln > 0) ack.iv = Math.round(p.invuln * 100) / 100;
+          /* HOST'UN PLATFORM SAATİ.
+
+             Misafir platform fazını anlık görüntüden yumuşak sürüklemeyle
+             yakalıyor ve bu bilerek gevşek: eşik sıkılaştırılınca `ahead`
+             tahminindeki ±0.05 sn dalgalanma her pakette zorla hizalamaya
+             dönüşüp saniyede 20 mikro sıçrama üretiyordu (bkz. snapshot.js).
+             Bedeli, misafirin saatinin host'unkinden 0.25 sn'ye kadar
+             ayrılabilmesi.
+
+             Yerinde DURURKEN bu görünmüyor; platform zemin gibi davranıp
+             oyuncuyu kelepçeliyor. Ama DİKEY platformda ZIPLAYINCA kelepçe
+             kalkıyor ve faz farkı İNİŞ KARESİNİ kaydırıyor: biri yere
+             basmışken diğeri hâlâ ~500 px/sn düşüyor, fark birkaç karede
+             büyüyor (oyuncu 90 px'e kadar bildirdi).
+
+             Yeniden oynatmayı misafirin kendi (kaymış) saatiyle geri
+             sarmak bu farkı düzeltmiyordu — yanlış faza sarıyordu. Onayla
+             birlikte host'un saati de gidiyor; oynatma artık host'un
+             kullandığı yörüngenin AYNISINI kullanıyor.
+
+             Tüm platformlar aynı saati paylaşıyor (hepsi 0'dan başlayıp
+             `dt` ekliyor; ayrım `speed`/`phase` yapılandırmasında), o
+             yüzden tek sayı yetiyor. */
+          const mp0 = this.entities.movingPlatforms[0];
+          if (mp0) ack.mt = Math.round(mp0.animTime * 1000) / 1000;
           this.remoteAck = ack;
         } else {
           /* GİRDİ YOK → BU OYUNCUYU BU ADIMDA SİMÜLE ETME.

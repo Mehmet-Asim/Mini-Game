@@ -706,7 +706,7 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
     p.invuln = ak.iv ?? 0;
   }
 
-  replayPending(eng, p, pending);
+  replayPending(eng, p, pending, ak.mt);
   return err;
 }
 
@@ -727,7 +727,7 @@ const MAX_REPLAY = 40;
 /* Tek örnek yeniden kullanılıyor — saniyede 20 kez çağrılıyor, çöp üretmesin */
 let _replayInput = null;
 
-function replayPending(eng, p, pending) {
+function replayPending(eng, p, pending, hostPlatformTime) {
   if (!pending.length || !eng.level) return;
 
   if (!_replayInput) _replayInput = new RemoteInput();
@@ -770,7 +770,16 @@ function replayPending(eng, p, pending) {
   const platforms = eng.entities?.movingPlatforms || [];
   const saved = platforms.map(m => ({ m, animTime: m.animTime, x: m.x, y: m.y, dx: m.dx, dy: m.dy }));
   const frames = pending.length - start;
-  for (const s of saved) s.m.seek(s.animTime - frames * REPLAY_DT);
+  /* Tercihen HOST'un saatiyle geri sar (onayla geliyor, bkz. engine.js →
+     ack.mt). Misafirin kendi saati yumuşak sürüklemeyle host'unkinden
+     0.25 sn'ye kadar ayrılabiliyor; onunla sarmak yeniden oynatmayı
+     YANLIŞ FAZA götürüyor ve dikey platformda zıplarken iniş karesini
+     kaydırıp büyük sapma üretiyordu. Onay yoksa (eski host, ilk paketler)
+     eskisi gibi kendi saatimizden geriye sayıyoruz. */
+  const seekBase = Number.isFinite(hostPlatformTime) ? hostPlatformTime : null;
+  for (const s of saved) {
+    s.m.seek(seekBase !== null ? seekBase : s.animTime - frames * REPLAY_DT);
+  }
 
   /* Çöken bloklar geri sarılamıyor (tetiklemeye bağlı durum makinesi),
      bu yüzden motor son karelerini saklıyor — bkz. engine.js. Şimdiki
@@ -826,6 +835,15 @@ function replayPending(eng, p, pending) {
   /* Gerçek (şimdiki) duruma geri koy: oynatma bir simülasyon değil,
      geçmişin tekrarı. Dünyayı oynatmanın bıraktığı yerde bırakmak
      çizimi ve bir sonraki adımı bozardı. */
+  /* Gerçek (şimdiki) duruma geri koy: oynatma bir simülasyon değil,
+     geçmişin tekrarı.
+
+     Host'un fazını oynatma SONRASINDA da tutmayı denedim (ak.mt + frames
+     kesin bir değer, gürültülü değil) — ölçümde TERS TEPTİ: ort 11.9 →
+     17.9 px, p95 45 → 75 px. Sebebi canlı saatin saniyede 20 kez sertçe
+     yerinden oynaması; platform sıçrayınca üstündeki oyuncu savruluyor.
+     Host'un fazı yalnızca OYNATMA SÜRESİNCE kullanılıyor; canlı saati
+     yumuşak sürükleme yönetmeye devam ediyor (bkz. applySnapshot). */
   for (const s of saved) {
     s.m.animTime = s.animTime;
     s.m.x = s.x; s.m.y = s.y;

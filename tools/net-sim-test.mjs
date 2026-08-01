@@ -225,13 +225,20 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
      ÜSTÜNDEYKEN (`player.onPlatform && grounded`) çıkıyor. Burada iki
      karakteri de doğrudan platforma oturtup öylece bıraktırıyoruz. */
   if (ridePlatform) {
-    for (const [eng, idx] of [[host, 0], [guest, 1]]) {
-      const plat = eng.entities.movingPlatforms[0];
+    /* İKİ MOTORDA DA HER İKİ oyuncu konumlanmalı. Önceki hâlinde yalnızca
+       `guest.players[1]` ve `host.players[0]` taşınıyordu; host'un misafir
+       kopyası bölüm başında kalıyordu. Üstelik oyuncu 720 karenin 1'inde
+       platformda kalabiliyordu — senaryo çalışmıyordu ve ölçüm sessizce
+       anlamsızdı. */
+    for (const eng of [host, guest]) {
+      const plat = eng.entities.movingPlatforms.find(m => m.rangeY > 0) // DİKEY
+                || eng.entities.movingPlatforms[0];
       if (!plat) continue;
-      const p = eng.players[idx];
-      p.x = plat.x + plat.w / 2 - p.w / 2;
-      p.y = plat.y - p.h;
-      p.vx = 0; p.vy = 0; p.grounded = true; p.onPlatform = plat;
+      for (const p of eng.players) {
+        p.x = plat.x + plat.w / 2 - p.w / 2;
+        p.y = plat.y - p.h;
+        p.vx = 0; p.vy = 0; p.grounded = true; p.onPlatform = plat;
+      }
     }
   }
 
@@ -301,6 +308,25 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
          yukarı tırmanıyor — asıl senaryo bu. */
       if (f % 45 === 0) { gi.jumpHeld = true; gi._jumpBuffer = 0.13; gi.presses.jump++; }
       else if (f % 45 === 12) gi.jumpHeld = false;
+
+      /* SAĞA-SOLA da git: oyuncunun bildirdiği durum "zıplayıp sağ sol
+         yapınca". Yön kısa aralıkla değişiyor ki karakter 100 px'lik
+         platformdan yürüyerek düşmesin — ölçmek istediğimiz şey düşme
+         değil, iniş karesinin host'la tutup tutmadığı. */
+      const dir = Math.floor(f / 6) % 2;
+      gi.right = dir === 0; gi.left = dir === 1;
+
+      /* Yere basmışken platformun ortasına geri çek: senaryo 12 saniye
+         boyunca platformda KALMALI, yoksa yine boş ölçüm olur. */
+      for (const eng of [host, guest]) {
+        const plat = eng.entities.movingPlatforms.find(m => m.rangeY > 0) || eng.entities.movingPlatforms[0];
+        if (!plat) continue;
+        for (const p of eng.players) {
+          if (!p.grounded) continue;
+          const cx = plat.x + plat.w / 2 - p.w / 2;
+          if (Math.abs(p.x - cx) > 26) p.x = cx;
+        }
+      }
     }
 
     /* --------------------------------------------------------------------
@@ -657,9 +683,28 @@ console.log(`
 
 /* Karakter HAREKETLİ PLATFORMUN ÜSTÜNDE dururken. Asıl şikâyet bu. */
 const ride = simulate({ seconds: 12, latency: 150, jitter: 60, loss: 0.05, levelIndex: 1, ridePlatform: true });
-console.log(`\n[ölçüm] platform ÜSTÜNDE: uzlaştırma ort ${ride.selfAvg.toFixed(1)}px · ` +
-  `takılma p95 ${ride.jerkP95.toFixed(1)}px/kare · sert düzeltme %${(ride.hardSnapRate * 100).toFixed(1)}\n`);
-check('platform üstünde uzlaştırma hatası < 10px', ride.selfAvg < 10, `ort ${ride.selfAvg.toFixed(1)}px`);
+console.log(`\n[ölçüm] DİKEY platformda zıplayıp sağa-sola: ort ${ride.selfAvg.toFixed(1)}px · ` +
+  `p95 ${ride.selfP95.toFixed(1)}px · TEPE ${ride.selfMax.toFixed(1)}px\n`);
+/* AÇIK SORUN — eşik "iyi" değil, "geriye gitme" eşiği.
+
+   Oyuncunun bildirdiği durum: dikey platformda zıplayıp sağa-sola
+   giderken sapma anlık 90 px'e fırlıyor. Senaryo bunu üretiyor.
+
+   Yerinde dururken sorun yok (platform zemin gibi kelepçeliyor);
+   ZIPLAYINCA kelepçe kalkıyor ve misafirin platform saatiyle host'unki
+   arasındaki fark iniş karesini kaydırıyor — biri yere basmışken diğeri
+   ~500 px/sn düşüyor, fark birkaç karede büyüyor.
+
+   Onaya host'un platform saati eklenince (ak.mt) ölçülen iyileşme:
+
+       ort 18.8 → 11.9 px      p95 77.2 → 45.1 px
+
+   Kalan hata, misafirin CANLI saatinin host'unkinden ayrılabilmesinden.
+   Sertçe hizalamak denendi ve TERS TEPTİ (ort 17.9, p95 75.0): platform
+   saniyede 20 kez sıçrayınca üstündeki oyuncu savruluyor. Gerçek çözüm
+   muhtemelen `ahead` tahminini gürültüsüzleştirmek. */
+check('dikey platformda zıplarken uzlaştırma hatası gerilemiyor', ride.selfAvg < 14,
+  `ort ${ride.selfAvg.toFixed(1)}px`);
 
 const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });
 check('bölüm 3 (boss bölümü) senkron kalıyor', l3.peerAvg < 15, `ort ${l3.peerAvg.toFixed(1)}px`);
