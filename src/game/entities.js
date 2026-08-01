@@ -44,8 +44,33 @@ class Entity {
         particles.enemyDeath(this.cx, this.cy, this.deathColor || '#8a3050');
       }
       this.deathTimer += dt;
-      if (this.deathTimer > 0.35) this.alive = false;
+      /* `predictedDead`: misafir KENDİ okunun isabetini host onaylamadan
+         önce oynatıyor (bkz. engine.js → _predictArrowHits). Ölüm
+         animasyonu hemen başlasın diye `dying` işaretleniyor, ama nesne
+         listeden DÜŞÜRÜLMÜYOR: host "hâlâ yaşıyor" derse geri alınabilmesi
+         gerek. Onay gelince bayrak kalkar ve normal akış nesneyi siler
+         (bkz. snapshot.js → applySnapshot). */
+      if (this.deathTimer > 0.35 && !this.predictedDead) this.alive = false;
     }
+  }
+
+  /** Misafirin tahmini isabeti — host onaylayana kadar geri alınabilir */
+  markPredictedDead(particles) {
+    if (this.dying || this.predictedDead) return false;
+    this.dying = true;
+    this.deathTimer = 0;
+    this.predictedDead = true;
+    this.hurtFlash = 0.12;
+    if (particles) particles.enemyDeath(this.cx, this.cy, this.deathColor || '#8a3050');
+    return true;
+  }
+
+  /** Host "yaşıyor" dedi — tahmini ölümü geri al */
+  revivePredicted() {
+    if (!this.predictedDead) return;
+    this.predictedDead = false;
+    this.dying = false;
+    this.deathTimer = 0;
   }
 }
 

@@ -421,7 +421,14 @@ export class CoopSession {
     if (this.isHost || !this.engine) return;
     const snap = this.buffer.sample(now);
     if (!snap) return;
-    applySnapshot(this.engine, snap, this.localIndex);
+    /* Oynatılan kare NE KADAR ESKİ?
+         · tampon gecikmesi (uyarlanabilir, sabit değil)
+         · + tek yön ağ gecikmesi — paket host'tan çıkalı zaten rtt/2 olmuş
+       Hareketli platformlar bu kadar ileri sarılarak "şimdi"ye taşınıyor.
+       Yalnızca tamponu saymak platformu tek yön gecikmesi kadar geride
+       bırakıyor ve üstündeki oyuncuyu yavaşça kenara sürüklüyordu. */
+    const behind = this.buffer.delay + (this.net?.rtt ?? 0) / 2;
+    applySnapshot(this.engine, snap, this.localIndex, behind);
     this._applyHostState(snap.st);
   }
 

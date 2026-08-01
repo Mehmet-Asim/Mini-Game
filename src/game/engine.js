@@ -609,13 +609,19 @@ export class GameEngine {
     const guest = this.netMode === 'guest';
 
     /* --- Hareketli/çöken platformları çarpışma listesine ekle ---
-       Misafirde bunların konumu anlık görüntüden geliyor; yerel olarak
-       ilerletmek iki ekranda kayma yaratır. */
-    if (!guest) {
-      for (const mp of e.movingPlatforms) mp.update(dt);
-      for (const cp of e.crumbles) cp.update(dt);
-      this._updateCoop(dt);
-    }
+       BUNLAR MİSAFİRDE DE YEREL KOŞAR.
+
+       Eskiden yalnızca host ilerletiyordu, misafir konumu anlık görüntüden
+       alıyordu. Sonuç: üstünde durduğun zemin tampon gecikmesi kadar geride
+       kalıyor (ölçüldü: ort. 7 px, tepe 44 px), host senin farklı bir
+       yükseklikte olduğunu söylüyor ve her uzlaştırma seni çekiştiriyordu.
+       İkisi de deterministik — hareketli platform saf zaman fonksiyonu,
+       çöken platform sayaçlı bir durum makinesi — dolayısıyla misafir
+       host'un saatini bilince aynı sonucu üretir. Anlık görüntü artık
+       sürücü değil, DÜZELTİCİ (bkz. snapshot.js → applySnapshot). */
+    for (const mp of e.movingPlatforms) mp.update(dt);
+    for (const cp of e.crumbles) cp.update(dt);
+    if (!guest) this._updateCoop(dt);
 
     this._rebuildSolids();
 
@@ -700,7 +706,22 @@ export class GameEngine {
       for (const ar of e.predictedArrows) {
         if (ar.alive) ar.update(dt, ctx);
       }
+      this._predictArrowHits();
       e.predictedArrows = e.predictedArrows.filter(x => x.alive);
+
+      /* --- Uçuruma düşerken DİBE ÇAK ---
+         Ölüm bölgesi kararı host'ta (aşağıda) ve misafire ~265 ms sonra
+         geliyor. O süre boyunca misafirin karakteri hiçbir şey onu
+         durdurmadığı için boşlukta hızlanarak düşmeye devam ediyordu;
+         host'un "öldün, buradasın" cevabı gelince de yüzlerce piksel
+         geriye çekiliyordu (ölçüldü: 795 px'lik sıçrama). Kimin öldüğüne
+         hâlâ host karar veriyor — burada sadece cevabı beklerken düşüşü
+         ölüm çizgisinde durduruyoruz ki düzeltme küçük kalsın. */
+      const me = this.players[this.localIndex];
+      if (me && !me.dead && me.y > this.level.deathY) {
+        me.y = this.level.deathY;
+        me.vy = 0;
+      }
 
       this._stepTipsAndCamera(dt);
       return;
@@ -820,6 +841,89 @@ export class GameEngine {
     if (this._hints[key] && now - this._hints[key] < ms) return;
     this._hints[key] = now;
     if (this.cb.onToast) this.cb.onToast(text, ms);
+  }
+
+  /* ======================================================================
+     Misafir: KENDİ okumun isabetini tahmin et
+
+     Hasarın defterini host tutuyor ve kararı ~265 ms sonra geri geliyor
+     (girdi 70 ms + host 25 ms + anlık görüntü 70 ms + tampon 100 ms).
+     O süre boyunca ok düşmanın İÇİNDEN GEÇİP gidiyor, düşman bir müddet
+     hiçbir şey olmamış gibi duruyor ve sonra birden yok oluyordu —
+     oyuncunun "ok düşmanı hemen öldürmüyor" dediği şey buydu.
+
+     Burada yapılan tamamen GÖRSEL: ok tüketiliyor, kıvılcım/ses/sarsıntı
+     anında çalıyor, düşman ölüm animasyonuna giriyor. Hiçbir hasar
+     hesaplanmıyor, kimse listeden düşürülmüyor — host "yaşıyor" derse
+     tahmin geri alınıyor (bkz. entities.js → revivePredicted).
+     ====================================================================== */
+  _predictArrowHits() {
+    const e = this.entities;
+    if (e.predictedArrows.length === 0) return;
+
+    for (const ar of e.predictedArrows) {
+      if (!ar.alive || ar.stuck) continue;
+
+      let hit = false;
+      for (const en of e.enemies) {
+        if (!en.alive || en.dying) continue;
+        if (!aabb(ar.x, ar.y, ar.w, ar.h, en.x, en.y, en.w, en.h)) continue;
+        /* Can ağdan GEÇMİYOR (bkz. packEnemy) — misafirdeki `hp` bölüm
+           başındaki değerinde kalır. Yani yalnızca tek vuruşluk düşmanlar
+           için ölüm tahmin ediliyor; iki canlı büyücüde sadece sarsılma
+           gösteriliyor ve ölümü eskisi gibi host'tan bekliyor. Bilerek
+           böyle: emin olmadığımız ölümü tahmin etmiyoruz. */
+        const killed = (en.hp ?? 1) <= 1;
+        if (killed) en.markPredictedDead(this.particles);
+        else en.hurtFlash = 0.12;
+        ar.consume(this.particles);
+        hit = true;
+        this.camera.addShake(killed ? 7 : 4);
+        if (this.audio) {
+          this.audio.playArrowHit();
+          if (killed) this.audio.playEnemyDeath();
+        }
+        break;
+      }
+      if (hit) continue;
+
+      /* Düşman mermisini havada patlatma — misafirde de anında görünsün */
+      for (const pr of e.projectiles) {
+        if (!pr.alive || pr.deflected) continue;
+        if (!aabb(ar.x, ar.y, ar.w, ar.h, pr.x, pr.y, pr.w, pr.h)) continue;
+        ar.consume(this.particles);
+        this.particles.hitSpark(pr.cx, pr.cy, '#ffd76b', 14);
+        this.camera.addShake(4);
+        if (this.audio) this.audio.playDeflect();
+        hit = true;
+        break;
+      }
+      if (hit) continue;
+
+      /* --- Ejderha ---
+         3. bölümün TAMAMI bu dövüş; ok ejderhanın içinden geçip gidince
+         oyuncu vurup vurmadığını anlayamıyordu. Host'un mantığının aynısı
+         (bkz. _combatShared): savunmasızken kafa, değilse zırhlı gövde.
+         Can yine host'ta düşüyor — burada yalnızca okun durduğu ve
+         kıvılcımın çıktığı görülüyor. */
+      const boss = this.boss;
+      if (!boss || !boss.alive || boss.dying) continue;
+
+      if (boss.vulnerable) {
+        const hb = boss.headBox;
+        if (aabb(ar.x, ar.y, ar.w, ar.h, hb.x, hb.y, hb.w, hb.h)) {
+          ar.consume(this.particles);
+          this.camera.addShake(6);
+          if (this.audio) this.audio.playArrowHit();
+          continue;
+        }
+      }
+      if (boss.hitsBox && boss.hitsBox(ar)) {
+        ar.consume(this.particles);
+        this.particles.hitSpark(ar.cx, ar.cy, '#9aa0b8', 10);
+        if (this.audio) this.audio.playArrowHitWall();
+      }
+    }
   }
 
   _rebuildSolids() {

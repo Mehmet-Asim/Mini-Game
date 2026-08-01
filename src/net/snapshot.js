@@ -35,6 +35,12 @@ const r2 = (v) => Math.round(v * 100) / 100;     // iki ondalık
    0 = yok; sıralama değiştirilirse iki taraf da güncellenmeli. */
 const ATTACK_CODES = ['fireball', 'sweep', 'meteor', 'slam'];
 
+/* Misafirin tahmini ok isabeti kaç saniye onay bekler?
+   Gidiş-dönüş ~265 ms (girdi 70 + host 25 + görüntü 70 + tampon 100);
+   0.6 sn rahat pay bırakıyor. Bu süre dolduğunda host hâlâ "yaşıyor"
+   diyorsa tahmin ıskalanmıştır ve düşman geri gelir. */
+const PREDICT_CONFIRM_SEC = 0.6;
+
 /* --------------------------------------------------------------------------
    Serileştirme — host tarafı
    -------------------------------------------------------------------------- */
@@ -130,9 +136,15 @@ export function serializeSnapshot(eng, tick) {
     ga: e.gates.map(g => r2(g.open) + (g.latched ? 1000 : 0)),
     lf: e.coopLifts.map(l => r1(l.y)),
 
-    /* Hareketli/çöken platformlar — faz senkronu için */
-    mp: e.movingPlatforms.map(m => ({ x: r1(m.x), y: r1(m.y) })),
-    cr: e.crumbles.map(c => ({ y: r1(c.y), p: c.phase, s: c.solid ? 1 : 0 })),
+    /* Hareketli platform: KONUM DEĞİL SAAT gönderiliyor.
+       Konum göndermek platformu misafirde tampon gecikmesi kadar geride
+       bırakıyordu (ölçüldü: ort. 7 px, tepe 44 px). Üstünde duran oyuncu
+       host'un bilmediği bir yükseklikte tahmin ediliyor, her anlık görüntü
+       onu geri çekiyordu — "platformda titreme" buydu. Hareket saf bir
+       zaman fonksiyonu (start + sin(animTime*speed + phase) * range), yani
+       misafir saati bilirse konumu BİREBİR kendi hesaplar. */
+    mp: e.movingPlatforms.map(m => ({ t: r2(m.animTime) })),
+    cr: e.crumbles.map(c => ({ y: r1(c.y), p: c.phase, s: c.solid ? 1 : 0, tm: r2(c.timer), vy: r1(c.vy) })),
 
     /* Boss
        Hazırlık (telegraph) bilgisi de geçmek zorunda: saldırıyı okumak
@@ -247,7 +259,12 @@ function applyCollected(list, bits) {
  * @param snap         interpolasyonla harmanlanmış anlık görüntü
  * @param localIndex   misafirin kendi karakteri (tahmin edilir, ışınlanmaz)
  */
-export function applySnapshot(eng, snap, localIndex = 1) {
+/**
+ * @param delayMs Tamponun kaç ms geçmişi oynattığı (SnapshotBuffer.delay).
+ *   Zamanı saf fonksiyon olan nesneleri (hareketli platform) "şimdi"ye
+ *   taşımak için gerekiyor — bkz. aşağıdaki platform bölümü.
+ */
+export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DELAY_MS) {
   if (!snap) return;
 
   /* --- DÜNYA KUŞAĞI (`rs`) — bölüm yükleme host'un kararı ---
@@ -373,7 +390,22 @@ export function applySnapshot(eng, snap, localIndex = 1) {
     }
     applyTelegraph(en, s.tg);
     if (s.vx !== undefined) { en.vx = s.vx; en.vy = s.vy ?? 0; }
-    en.dying = !!s.dy;
+
+    /* --- Tahmini ölüm: onayla ya da geri al ---
+       Misafir kendi okunun isabetini host'tan önce oynatıyor (bkz.
+       engine.js → _predictArrowHits). Host hâlâ "yaşıyor" diyorsa
+       hemen diriltmiyoruz: paket zaten ~265 ms eski, oku daha görmemiş
+       olabilir. Kısa bir onay penceresi tanıyor, dolduğunda geri
+       alıyoruz — böylece ıskalanan tahmin kalıcı hayalet bırakmıyor. */
+    if (en.predictedDead) {
+      /* `deathTimer` tahminden bu yana geçen süreyi zaten tutuyor
+         (tickVisuals her karede ilerletiyor) — ayrı sayaç gerekmiyor,
+         kare hızından da bağımsız. */
+      if (s.dy) { en.predictedDead = false; en.dying = true; }
+      else if (en.deathTimer > PREDICT_CONFIRM_SEC) en.revivePredicted();
+    } else {
+      en.dying = !!s.dy;
+    }
     if (!s.a) en.alive = false;
   }
   /* Host'un listesinden düşen düşman ölmüştür — ama misafirde ölüm
@@ -381,7 +413,12 @@ export function applySnapshot(eng, snap, localIndex = 1) {
      yol açıyordu; `dying` işaretleyip yerel görsel saate bırakıyoruz. */
   const liveIds = new Set(snap.en.map(s => s.i));
   for (const en of e.enemies) {
-    if (liveIds.has(en.id) || en.dying) continue;
+    if (liveIds.has(en.id)) continue;
+    /* Listeden düşmek EN KESİN onaydır: tahmini ölüm gerçekleşmiş demek.
+       Bayrağı kaldırmazsak nesne `alive = false` olamaz ve ekranda
+       görünmez ama silinmemiş bir düşman sonsuza dek asılı kalır. */
+    en.predictedDead = false;
+    if (en.dying) continue;
     en.dying = true;
     en.deathTimer = 0;
   }
@@ -428,17 +465,60 @@ export function applySnapshot(eng, snap, localIndex = 1) {
     l.y = y;
   });
 
-  /* --- Platformlar --- */
+  /* --- Hareketli platformlar: SAATİ kur, konumu misafir kendi hesaplasın ---
+     Anlık görüntü `delayMs` kadar geçmişten oynatılıyor (interpolasyon
+     tamponu). Platformu o geçmiş ana kurarsak misafirin üstünde durduğu
+     zemin host'un bildiğinden farklı yerde olur ve her uzlaştırma oyuncuyu
+     geri çeker. Saati tampon gecikmesi kadar İLERİ alıp "şimdi"ye
+     getiriyoruz — böylece misafirin ayağının altındaki platform host'un
+     hesapladığıyla aynı yerde oluyor.
+
+     Sapma küçükken saate dokunmuyoruz: her pakette saati zorlamak
+     hareketi mikro-sıçratıyor. Büyük sapma (sekme/duraklama sonrası)
+     tek seferde toparlanıyor. */
+  const ahead = Math.max(0, delayMs) / 1000;
   e.movingPlatforms.forEach((m, i) => {
     const s = snap.mp[i];
-    if (!s) return;
-    m.dx = s.x - m.x; m.dy = s.y - m.y;
-    m.x = s.x; m.y = s.y;
+    if (!s || !Number.isFinite(s.t)) return;
+    const want = s.t + ahead;
+    const drift = want - m.animTime;
+    /* Eşik saniye cinsinden. Daha sıkı denendi (0.06 / 0.18) ve TERS
+       TEPTİ: `ahead` tahmini ağ dalgalanmasıyla ±0.05 sn oynadığı için
+       eşik o bandın içine girince platform HER pakette zorla hizalanıyor,
+       saniyede 20 mikro sıçrama oluyordu (ölçüldü: sıçrayan kare 1 → 110).
+       Eşik dalgalanma bandının üstünde kalmalı; normalde yumuşak sürükleme
+       çalışır, sert hizalama yalnızca gerçek kopukluklar için devreye
+       girer (bölüm açılışı, sekme, duraklama sonrası). */
+    if (Math.abs(drift) > 0.25) m.animTime = want;
+    else m.animTime += drift * 0.12;                     // yumuşak sürükle
   });
+
+  /* --- Çöken platformlar ---
+     Faz ve sayaç host'un; ama misafir bunları KARELER ARASINDA kendi
+     ilerletiyor (bkz. engine.js). Burada yalnızca host'un defterine
+     hizalıyoruz, yoksa faz saniyede 20 kez basamaklı ilerler ve üstündeki
+     oyuncu 50 ms'lik adımlarla düşerdi. */
   e.crumbles.forEach((c, i) => {
     const s = snap.cr[i];
     if (!s) return;
-    c.y = s.y; c.phase = s.p; c.solid = !!s.s;
+
+    /* TEK İSTİSNA: misafir kendi ayağının altındaki platformu host'tan
+       önce tetikler (girdi host'a ~70 ms sonra varıyor). O aralıkta host
+       hâlâ 'idle' der; buna uyup fazı geri almak sarsıntı sayacını her
+       karede sıfırlıyor ve platform misafirde bir türlü çökmüyordu.
+       Yalnızca bu tek adımlık önden gitmeye izin veriyoruz — host'un
+       gerçekten tetiklenmediğini söylediği durum kendini bir sonraki
+       fazda zaten düzeltir. */
+    const guestLeads = c.phase === 'shake' && s.p === 'idle';
+    if (!guestLeads) {
+      c.phase = s.p;
+      c.solid = !!s.s;
+      if (Number.isFinite(s.tm)) c.timer = s.tm;
+      if (Number.isFinite(s.vy)) c.vy = s.vy;
+      /* Düşerken y'yi host'a zorlamak sıçratıyor; yerel fizik zaten aynı
+         ivmeyle sürüyor, sadece belirgin sapmada topluyoruz. */
+      if (c.phase !== 'fall' || Math.abs(s.y - c.y) > 24) c.y = s.y;
+    }
   });
 
   /* --- Boss ---
@@ -791,8 +871,13 @@ export class SnapshotBuffer {
     const last = this.buf[this.buf.length - 1];
     if (target >= last.at) {
       const ahead = target - last.at;
+      /* Ejderhanın hızı SON İKİ PAKETTEN türetiliyor, `bo` içindeki
+         vx/vy'den değil: ejderha yalnızca bazı durumlarda (sweep, slam)
+         o alanları kullanıyor, 'hover'da konumu doğrudan yazıyor ve
+         vx/vy sıfır kalıyor. Ölçümden türetmek her durumda çalışır ve
+         ağa tek bayt eklemez. */
       const snap = ahead <= this.maxExtrapolate
-        ? extrapolate(last.snap, ahead / 1000)
+        ? extrapolate(last.snap, ahead / 1000, this._bossVelocity())
         : last.snap;
       this.lastServed = snap;
       return snap;
@@ -809,6 +894,23 @@ export class SnapshotBuffer {
     return blended;
   }
 
+  /** Son iki paketten ejderhanın hızı (px/sn) — yoksa null */
+  _bossVelocity() {
+    const n = this.buf.length;
+    if (n < 2) return null;
+    const last = this.buf[n - 1], prev = this.buf[n - 2];
+    if (!last.snap.bo || !prev.snap.bo) return null;
+    const dts = (last.at - prev.at) / 1000;
+    if (dts <= 0.001) return null;
+    const vx = (last.snap.bo.x - prev.snap.bo.x) / dts;
+    const vy = (last.snap.bo.y - prev.snap.bo.y) / dts;
+    /* Durum geçişlerinde (giriş, ışınlanma) iki paket arası sıçrama
+       gerçek hız değildir; saçma bir değerle ileri sarmaktansa hiç
+       sarmamak yeğdir. */
+    if (Math.hypot(vx, vy) > 2500) return null;
+    return { vx, vy };
+  }
+
   get depth() { return this.buf.length; }
   clear() { this.buf.length = 0; }
 }
@@ -818,7 +920,7 @@ export class SnapshotBuffer {
  * Sadece oyuncular ve boss — düşmanların hız bilgisi taşınmıyor ve
  * devriye hareketleri zaten yavaş, donmaları göze batmıyor.
  */
-function extrapolate(snap, dt) {
+function extrapolate(snap, dt, bossVel = null) {
   const cap = 40;   // px — tek seferde bu kadardan fazla tahmin etme
   const step = (v) => Math.max(-cap, Math.min(cap, v * dt));
   const out = { ...snap };
@@ -827,7 +929,22 @@ function extrapolate(snap, dt) {
     x: p.x + step(p.vx || 0),
     y: p.y + step(p.vy || 0)
   }));
-  if (snap.bo) out.bo = { ...snap.bo };
+  /* EJDERHA DA İLERLETİLİYOR.
+     Bu satır eskiden ejderhayı olduğu gibi kopyalıyordu — fonksiyonun
+     kendi açıklaması "oyuncular ve boss" dediği hâlde. Yani paket
+     geciktiği anlarda oyuncular akmaya devam ederken ejderha DONUYOR,
+     sonraki paket gelince ileri sıçrıyordu.
+
+     Dürüst olmak gerekirse: bu dal normal koşullarda hiç çalışmıyor
+     (±90 ms dalgalanmada bile karelerin %0'ı — uyarlanabilir tampon
+     hepsini yutuyor). Yalnızca hat gerçekten tıkandığında devreye
+     giriyor. Düzeltmenin sebebi de bu: tam o anda ejderhanın donması
+     dövüşün en kötü zamanda okunamaz hale gelmesi demek. */
+  if (snap.bo) {
+    out.bo = bossVel
+      ? { ...snap.bo, x: snap.bo.x + step(bossVel.vx), y: snap.bo.y + step(bossVel.vy) }
+      : { ...snap.bo };
+  }
   return out;
 }
 
@@ -887,9 +1004,12 @@ function blend(a, b, t, spanMs = 1000 / NET.SNAPSHOT_HZ) {
     return { ...eb, x: lerp(ea.x, eb.x), y: lerp(ea.y, eb.y) };
   });
 
+  /* Hareketli platform artık saat taşıyor; saati harmanlamak konumu
+     harmanlamakla aynı şey (ikisi de doğrusal ilerliyor) ama misafir
+     bunu yerel simülasyonda ileri sarabiliyor. */
   out.mp = b.mp.map((mb, i) => {
     const ma = a.mp[i];
-    return ma ? { x: lerp(ma.x, mb.x), y: lerp(ma.y, mb.y) } : mb;
+    return ma ? { t: lerp(ma.t, mb.t) } : mb;
   });
 
   out.lf = b.lf.map((yb, i) => {
