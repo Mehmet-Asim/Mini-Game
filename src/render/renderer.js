@@ -21,6 +21,20 @@ export class Renderer {
     this.flash = 0;          // beyaz ekran flaşı
     this.flashColor = '255,255,255';
     this.dpr = 1;
+    /* Faz 0 denemesi (tüm tuvali 480×270'e küçültme) terk edildi: prosedürel
+       vektör sanatını düşük çözünürlükte çizmek "piksel sanatı" değil,
+       sadece bulanık + aşırı yakınlaşmış bir görüntü veriyordu (ölçüldü,
+       bkz. proje notları). `pixelMode` bu yüzden kapalı — kod duruyor ama
+       kullanılmıyor.
+       Bunun yerine SADECE arka plan katmanı piksel bloklarına dönüştürülüyor
+       (bkz. `pixelBg` + `_renderPixelBackground`): tam çözünürlükte çiz →
+       küçük bir tuvale indirge → tekrar büyüt. Oyuncu/düşman/HUD hiç
+       etkilenmiyor, kamera/zoom matematiği bozulmuyor. */
+    this.pixelMode = false;
+    this.pixelBg = true;
+    this.bgPixelScale = 5;   // her "piksel" kaç gerçek ekran pikseli — 5 test edildi (3 zayıf, 8 detayı eziyor)
+    this._bgFull = null; this._bgFullCtx = null;
+    this._bgSmall = null; this._bgSmallCtx = null;
   }
 
   /* --------------------------------------------------------------------
@@ -57,6 +71,34 @@ export class Renderer {
      F3 panelindeki "tuval" satırı sonucu gösteriyor.
      -------------------------------------------------------------------- */
   resize(cssW, cssH) {
+    /* --- PIKSELmode: C STRATEJISI ---
+       480×270'te çiz → 1280×720 CSS ile göster.
+       Zoom her zaman tam piksel katılarında olur, titreme yok.
+       Mevcut kod şu kadar tatlı görünüyor mu test et; değilse
+       pixelMode = false dön ve eski davranış çalışmaya devam eder. */
+    if (this.pixelMode) {
+      const INTERNAL_W = this.pixelResW ?? 480;
+      const INTERNAL_H = this.pixelResH ?? 270;
+
+      this.canvas.width = INTERNAL_W;
+      this.canvas.height = INTERNAL_H;
+      /* CSS boyutu SABİT DEĞİL — gerçek container boyutuna (`.game-frame`,
+         max 1080×660, altında responsive) esnetiliyor. Sabit 1280×720
+         yazarsam küçük pencerede/telefonda tuval taşar. */
+      this.canvas.style.width = cssW + 'px';
+      this.canvas.style.height = cssH + 'px';
+      this.canvas.style.imageRendering = 'pixelated';
+
+      this.ctx.imageSmoothingEnabled = false;
+      this.dpr = 1;
+      this.w = INTERNAL_W;
+      this.h = INTERNAL_H;
+
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return;
+    }
+
+    /* --- ÖNCEKİ: dinamik dpr --- */
     const DPR_CAP = 1.5;
     const PIXEL_CAP = 1920 * 1080;
 
@@ -75,6 +117,51 @@ export class Renderer {
   }
 
   setTheme(name) { this.bg.setTheme(name); }
+
+  /* --------------------------------------------------------------------
+     Sadece arka planı piksel-blok yap.
+
+     Tam çözünürlükte normal şekilde çiziyoruz (mevcut kod, orantılar
+     bozulmuyor), sonra o görüntüyü küçük bir tuvale indirgeyip tekrar
+     büyütüyoruz. `imageSmoothingEnabled=true` ile indirgeme renkleri
+     ortalayarak yumuşak bir örnekleme yapar (aliasing yok); tekrar
+     büyütürken `false` ile blok blok pikseller belirginleşir.
+
+     İki offscreen tuval her karede DEĞİL, sadece boyut değiştiğinde
+     yeniden oluşturuluyor — zoom sabitken sıfır ekstra maliyet.
+     ------------------------------------------------------------------ */
+  _renderPixelBackground(ctx, cam, w, h) {
+    const scale = Math.max(1, this.bgPixelScale);
+    const fw = Math.max(1, Math.ceil(w));
+    const fh = Math.max(1, Math.ceil(h));
+    const sw = Math.max(1, Math.round(fw / scale));
+    const sh = Math.max(1, Math.round(fh / scale));
+
+    if (!this._bgFull || this._bgFull.width !== fw || this._bgFull.height !== fh) {
+      this._bgFull = document.createElement('canvas');
+      this._bgFull.width = fw; this._bgFull.height = fh;
+      this._bgFullCtx = this._bgFull.getContext('2d');
+    }
+    if (!this._bgSmall || this._bgSmall.width !== sw || this._bgSmall.height !== sh) {
+      this._bgSmall = document.createElement('canvas');
+      this._bgSmall.width = sw; this._bgSmall.height = sh;
+      this._bgSmallCtx = this._bgSmall.getContext('2d');
+    }
+
+    /* 1) tam çözünürlükte normal çizim (mevcut sanat, değişmedi) */
+    this._bgFullCtx.clearRect(0, 0, fw, fh);
+    this.bg.render(this._bgFullCtx, cam, fw, fh);
+
+    /* 2) küçük tuvale indirgeme — yumuşak örnekleme, renk ortalaması */
+    this._bgSmallCtx.imageSmoothingEnabled = true;
+    this._bgSmallCtx.clearRect(0, 0, sw, sh);
+    this._bgSmallCtx.drawImage(this._bgFull, 0, 0, sw, sh);
+
+    /* 3) ana tuvale büyütme — nearest-neighbor, blok pikseller */
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this._bgSmall, 0, 0, sw, sh, 0, 0, fw, fh);
+    ctx.imageSmoothingEnabled = true;   // sonraki katmanları etkilemesin
+  }
 
   addFlash(amount = 0.5, color = '255,255,255') {
     this.flash = Math.max(this.flash, amount);
@@ -107,7 +194,8 @@ export class Renderer {
        yüzdesinde kalıyor. */
     ctx.save();
     ctx.translate(cam.screenLeft, cam.screenTop);
-    this.bg.render(ctx, cam, cam.viewW, cam.viewH);
+    if (this.pixelBg) this._renderPixelBackground(ctx, cam, cam.viewW, cam.viewH);
+    else this.bg.render(ctx, cam, cam.viewW, cam.viewH);
     ctx.restore();
 
     /* ---- 2. Dünya ---- */

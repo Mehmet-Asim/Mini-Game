@@ -83,6 +83,39 @@ export class Background {
         rot: Math.random() * 6.28
       });
     }
+    /* Piksel-blok filtresi (renderer.js → _renderPixelBackground) sahneyi
+       indirgeyip büyüttüğü için SEYREK bir arka plan çok boş görünüyordu —
+       tek ay + iki silik tepe bloklandığında "hiçbir şey yok" hissi
+       veriyordu. Bu parçacıklar sahneyi "orada olma" hissi için dolduruyor;
+       konumları sabit tohumla üretiliyor ki her kare aynı yerlerden
+       geçsinler (titreşim olmasın). */
+    this.fireflies = [];
+    for (let i = 0; i < 16; i++) {
+      this.fireflies.push({
+        x: Math.random(), baseY: 0.55 + Math.random() * 0.32,
+        amp: 10 + Math.random() * 22, speed: 0.3 + Math.random() * 0.5,
+        p: Math.random() * 6.28, blinkP: Math.random() * 6.28,
+        hue: Math.random() > 0.7 ? '150,255,200' : '220,255,140'
+      });
+    }
+    this.birds = [];
+    for (let i = 0; i < 3; i++) {
+      this.birds.push({ x: Math.random(), y: 0.08 + Math.random() * 0.18, s: 0.6 + Math.random() * 0.5, p: Math.random() * 6.28 });
+    }
+    this.clouds = [];
+    for (let i = 0; i < 5; i++) {
+      this.clouds.push({ x: Math.random(), y: 0.05 + Math.random() * 0.28, w: 90 + Math.random() * 140, seed: Math.random() * 99 });
+    }
+    /* Ejderha ini için — kanatları çırpan yarasalar (kuşların karanlık,
+       çarpık kuzeni). Kendi kalıcı yolları var ki her kare aynı rotada
+       süzülsünler. */
+    this.bats = [];
+    for (let i = 0; i < 4; i++) {
+      this.bats.push({
+        x: Math.random(), y: 0.14 + Math.random() * 0.3,
+        s: 0.7 + Math.random() * 0.6, p: Math.random() * 6.28, amp: 10 + Math.random() * 14
+      });
+    }
   }
 
   update(dt) { this.time += dt; }
@@ -128,6 +161,9 @@ export class Background {
     }
     ctx.restore();
 
+    // Uzak bulutlar (parallax 0.04) — ay ışığında silik gri-mavi lekeler
+    this._clouds(ctx, cx * 0.04, w, h);
+
     // Ay + halesi
     const mx = w * 0.76 - cx * 0.015;
     const my = h * 0.16 - cy * 0.01;
@@ -144,6 +180,18 @@ export class Background {
     ctx.beginPath(); ctx.arc(mx + 11, my + 6, 4.5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(mx + 3, my + 15, 3, 0, Math.PI * 2); ctx.fill();
 
+    // Süzülen kuşlar (parallax 0.1)
+    this._birds(ctx, cx * 0.1, w, h);
+
+    /* Vadiyi saran dağ silüetleri — en uzakta, puslu (0.025) ve biraz daha
+       yakında, koyu (0.045). Zirveler ufkun epey üstüne çıkıyor ki oyuncu
+       ormanda değil bir VADİDE yürüyormuş hissi versin. `_hills` (aşağıda)
+       bu dağların önünde yumuşak eteklikler olarak kalıyor. */
+    this._mountains(ctx, cx * 0.025, horizon - 30, w, h,
+      'rgba(22, 36, 56, 0.88)', 'rgba(160, 195, 230, 0.14)', 200, 85, 4.1);
+    this._mountains(ctx, cx * 0.045, horizon - 5, w, h,
+      'rgba(9, 18, 30, 0.96)', 'rgba(130, 165, 205, 0.1)', 150, 65, 21.6);
+
     // Uzak sisli tepeler (0.08)
     this._hills(ctx, cx * 0.08, horizon + 30, w, h, 'rgba(14, 32, 42, 0.9)', 120, 0.0016, 11);
     // Orta tepeler (0.16)
@@ -153,6 +201,11 @@ export class Background {
     this._treeRow(ctx, cx * 0.28, horizon + 40, w, 190, 0.5, 'rgba(6, 20, 18, 0.85)', 3.7);
     // Katman 4 — orta ağaçlar (0.45)
     this._treeRow(ctx, cx * 0.45, horizon + 70, w, 250, 0.72, 'rgba(4, 15, 13, 0.92)', 8.3);
+    // Katman 5 — YAKIN ağaçlar (0.58) — üçüncü sıra, sahneye derinlik/yoğunluk katıyor
+    this._treeRow(ctx, cx * 0.58, horizon + 95, w, 300, 0.94, 'rgba(3, 11, 10, 0.97)', 15.9);
+
+    // Ateş böcekleri (orta zemin, ağaçların önünde) — büyülü orman hissi
+    this._fireflies(ctx, cx, cy, w, h, horizon);
 
     // Ay ışığı huzmeleri
     ctx.save();
@@ -189,6 +242,103 @@ export class Background {
       ctx.restore();
     }
     ctx.restore();
+
+    // Ön plan çalılık + parlayan mantarlar (parallax 0.7, en yakın katman)
+    this._bushRow(ctx, cx * 0.7, horizon, w, 'rgba(2, 8, 7, 0.98)', '#0c1f16', true);
+  }
+
+  /* Silik bulut lekeleri — yavaş kayan, hafif saydam yumru gruplar */
+  _clouds(ctx, off, w, h) {
+    ctx.save();
+    for (const c of this.clouds) {
+      const cx0 = ((c.x * (w + c.w * 2) - off) % (w + c.w * 2)) - c.w;
+      const cy0 = c.y * h * 0.6;
+      ctx.globalAlpha = 0.10;
+      ctx.fillStyle = '#c9d6e8';
+      for (let k = 0; k < 4; k++) {
+        const bx = cx0 + k * c.w * 0.3 + noise1D(c.seed + k) * 14;
+        const by = cy0 + Math.sin(k * 1.7 + c.seed) * 8;
+        const r = c.w * (0.22 + noise1D(c.seed * 2 + k) * 0.12);
+        ctx.beginPath(); ctx.ellipse(bx, by, r, r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /* Uzakta süzülen kuş V'leri — kanat çırpışı için sinüs açı animasyonu */
+  _birds(ctx, off, w, h) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(10, 14, 22, 0.55)';
+    ctx.lineWidth = 1.4;
+    for (const b of this.birds) {
+      const bx = ((b.x * (w + 200) - off * b.s) % (w + 200)) - 100;
+      const by = b.y * h + Math.sin(this.time * 0.4 + b.p) * 10;
+      const flap = 4 + Math.sin(this.time * 7 + b.p * 3) * 3;
+      ctx.beginPath();
+      ctx.moveTo(bx - 8, by - flap);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(bx + 8, by - flap);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* Ateş böcekleri — yavaş dolaşan, yanıp sönen ışık noktaları */
+  _fireflies(ctx, cx, cy, w, h, horizon) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const f of this.fireflies) {
+      const fx = ((f.x * (w + 80) - cx * 0.5) % (w + 80)) - 40 + Math.sin(this.time * f.speed + f.p) * f.amp;
+      const fy = f.baseY * horizon + Math.cos(this.time * f.speed * 0.8 + f.p) * f.amp * 0.6;
+      if (fy < 0 || fy > horizon + 10) continue;
+      const blink = 0.3 + Math.max(0, Math.sin(this.time * 1.8 + f.blinkP)) * 0.7;
+      const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
+      g.addColorStop(0, `rgba(${f.hue}, ${0.55 * blink})`);
+      g.addColorStop(1, `rgba(${f.hue}, 0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(fx, fy, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = `rgba(${f.hue}, ${0.9 * blink})`;
+      ctx.fillRect(fx - 0.8, fy - 0.8, 1.6, 1.6);
+    }
+    ctx.restore();
+  }
+
+  /* En yakın katman: çalı/ot kümeleri + isteğe bağlı parlayan mantarlar.
+     Ufuk çizgisine oturuyor, sahneyi kameraya en yakın noktada dolduruyor —
+     piksel-blok filtresinden geçtiğinde net, okunaklı bir doku bırakır. */
+  _bushRow(ctx, off, horizon, w, color, glowColor, mushrooms) {
+    const spacing = 46;
+    const start = Math.floor(off / spacing) - 1;
+    const count = Math.ceil(w / spacing) + 3;
+    ctx.fillStyle = color;
+    for (let i = 0; i < count; i++) {
+      const idx = start + i;
+      const sx = idx * spacing - off;
+      const r = hash(idx * 4.3);
+      const bw = 30 + r * 22;
+      const bh = 14 + r * 16;
+      ctx.beginPath();
+      ctx.ellipse(sx, horizon - bh * 0.3, bw * 0.5, bh * 0.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(sx - bw * 0.3, horizon - bh * 0.15, bw * 0.32, bh * 0.38, 0, 0, Math.PI * 2);
+      ctx.ellipse(sx + bw * 0.32, horizon - bh * 0.18, bw * 0.3, bh * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (mushrooms && hash(idx * 9.1) > 0.72) {
+        const gx = sx + (hash(idx * 6.6) - 0.5) * bw;
+        const gy = horizon - 3;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, 10);
+        g.addColorStop(0, `${glowColor}55`);
+        g.addColorStop(1, `${glowColor}00`);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(gx, gy, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = glowColor;
+        ctx.fillRect(gx - 1, gy - 1, 2, 2);
+        ctx.restore();
+        ctx.fillStyle = color;
+      }
+    }
   }
 
   /* ======================================================================
@@ -252,14 +402,30 @@ export class Background {
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, w, h);
 
+    // Kanat çırpan yarasalar — mağaranın derinliklerinde süzülüyorlar
+    this._bats(ctx, cx * 0.15, w, h);
+
+    /* Vadiyi saran SİVRİ volkanik zirveler — ormandakiyle aynı `_mountains`
+       fonksiyonu, ama kızıl/lav renginde. Zirve hattı ay ışığı yerine
+       için için yanan lav parıltısıyla vurgulanıyor. */
+    this._mountains(ctx, cx * 0.03, horizon - 20, w, h,
+      'rgba(48, 16, 14, 0.85)', 'rgba(255, 130, 60, 0.16)', 210, 90, 6.4);
+    this._mountains(ctx, cx * 0.05, horizon, w, h,
+      'rgba(26, 8, 8, 0.95)', 'rgba(255, 100, 40, 0.12)', 155, 68, 33.2);
+    // Zirvelerde için için yanan lav damarları
+    this._lavaVeins(ctx, cx * 0.03, horizon - 20, w, 210, 90, 6.4);
+
     // Sarkıtlar (tavandan) — 0.12
     this._stalactites(ctx, cx * 0.12, w, h * 0.0, 'rgba(20, 6, 8, 0.9)', 0.6, 7);
     // Yakın sarkıtlar — 0.3
     this._stalactites(ctx, cx * 0.3, w, 0, 'rgba(12, 4, 5, 0.96)', 1.0, 23);
 
-    // Uzak volkanik tepeler
+    // Uzak volkanik tepeler (yumuşak eteklikler, dağların önünde)
     this._hills(ctx, cx * 0.09, horizon + 30, w, h, 'rgba(38, 10, 10, 0.9)', 150, 0.0018, 61);
     this._hills(ctx, cx * 0.2, horizon + 60, w, h, 'rgba(22, 6, 6, 0.95)', 100, 0.003, 83);
+
+    // Zeminde için için yanan çatlaklar
+    this._fissures(ctx, cx * 0.4, horizon + 55, w);
 
     // Lav gölü çizgisi
     ctx.save();
@@ -296,11 +462,154 @@ export class Background {
     ctx.restore();
 
     this._fogBand(ctx, w, h, horizon - 30, 'rgba(110, 35, 20, ');
+
+    // Ön plan kayalık + için için yanan kristal/köz aksanları (en yakın katman)
+    this._rockRow(ctx, cx * 0.65, horizon, w, 'rgba(10, 3, 3, 0.98)', '#ff6a28');
+  }
+
+  /* Yarasalar — kuşların karanlık kuzeni, çırpıntılı/düzensiz uçuş için
+     çift-V kanat şekli ve daha hızlı flap frekansı kullanıyor. */
+  _bats(ctx, off, w, h) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(6, 3, 4, 0.7)';
+    for (const b of this.bats) {
+      const bx = ((b.x * (w + 160) - off * b.s) % (w + 160)) - 80;
+      const by = b.y * h + Math.sin(this.time * 0.7 + b.p) * b.amp;
+      const flap = Math.sin(this.time * 10 + b.p * 4);
+      const wingY = 5 + flap * 4;
+      ctx.beginPath();
+      ctx.moveTo(bx - 9, by - wingY);
+      ctx.lineTo(bx - 3, by);
+      ctx.lineTo(bx, by - 2);
+      ctx.lineTo(bx + 3, by);
+      ctx.lineTo(bx + 9, by - wingY);
+      ctx.lineTo(bx, by + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Dağ zirvelerinde için için yanan lav damarları — `_mountains`teki
+     zirve formülüyle aynı tohumu kullanmıyor (kasıtlı: tam hizalanmayan
+     birkaç parıltı gerçek magma çatlağı gibi rastgele duruyor). */
+  _lavaVeins(ctx, off, baseY, w, peakH, step, seed) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let x = -step; x <= w + step; x += step) {
+      const wx = x + off;
+      const idx = Math.floor(wx / step);
+      if (hash(idx * 7.7 + seed) < 0.62) continue;
+      const y = baseY - hash(idx * 3.11 + seed) * peakH * (0.55 + hash(idx * 1.9) * 0.3);
+      const pulse = 0.4 + Math.max(0, Math.sin(this.time * 1.4 + idx)) * 0.6;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 14);
+      g.addColorStop(0, `rgba(255, 140, 50, ${0.5 * pulse})`);
+      g.addColorStop(1, 'rgba(255, 90, 30, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Zeminde için için yanan çatlaklar — sığ, çatallı çizgiler, yanıp
+     sönen köz rengiyle. */
+  _fissures(ctx, off, groundY, w) {
+    const spacing = 130;
+    const start = Math.floor(off / spacing) - 1;
+    ctx.save();
+    for (let i = 0; i < Math.ceil(w / spacing) + 3; i++) {
+      const idx = start + i;
+      if (hash(idx * 5.3) < 0.55) continue;
+      const sx = idx * spacing - off;
+      const pulse = 0.3 + Math.max(0, Math.sin(this.time * 1.1 + idx * 2)) * 0.5;
+      ctx.strokeStyle = `rgba(255, 110, 40, ${pulse})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx, groundY);
+      ctx.lineTo(sx + 10, groundY + 5);
+      ctx.lineTo(sx + 5, groundY + 12);
+      ctx.lineTo(sx + 16, groundY + 16);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* En yakın katman: sivri kaya kümeleri + için için yanan kristal/köz
+     aksanları. `_bushRow`in taş versiyonu — yuvarlak yumrular yerine
+     köşeli çokgenler. */
+  _rockRow(ctx, off, horizon, w, color, glowColor) {
+    const spacing = 52;
+    const start = Math.floor(off / spacing) - 1;
+    const count = Math.ceil(w / spacing) + 3;
+    ctx.fillStyle = color;
+    for (let i = 0; i < count; i++) {
+      const idx = start + i;
+      const sx = idx * spacing - off;
+      const r = hash(idx * 4.7);
+      const rw = 26 + r * 24;
+      const rh = 16 + r * 22;
+      ctx.beginPath();
+      ctx.moveTo(sx - rw * 0.5, horizon);
+      ctx.lineTo(sx - rw * 0.28, horizon - rh * 0.7);
+      ctx.lineTo(sx - rw * 0.05, horizon - rh);
+      ctx.lineTo(sx + rw * 0.2, horizon - rh * 0.55);
+      ctx.lineTo(sx + rw * 0.5, horizon);
+      ctx.closePath();
+      ctx.fill();
+
+      if (hash(idx * 8.4) > 0.68) {
+        const gx = sx + (hash(idx * 6.1) - 0.5) * rw * 0.6;
+        const gy = horizon - rh * 0.5;
+        const pulse = 0.5 + Math.max(0, Math.sin(this.time * 2.2 + idx)) * 0.5;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, 9);
+        g.addColorStop(0, `${glowColor}${Math.round(pulse * 130).toString(16).padStart(2, '0')}`);
+        g.addColorStop(1, `${glowColor}00`);
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(gx, gy, 9, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = glowColor;
+        ctx.fillRect(gx - 1, gy - 1, 2, 2);
+        ctx.restore();
+        ctx.fillStyle = color;
+      }
+    }
   }
 
   /* ======================================================================
      Yardımcı çizim fonksiyonları
      ====================================================================== */
+
+  /* Sivri dağ silueti — `_hills`in yumuşak dalgalı hattından farklı olarak
+     düz çizgi segmentleriyle KESKİN zirveler oluşturuyor (klasik uzak dağ
+     silüeti). `rimColor` verilirse zirve hattı ince, soluk bir ay ışığı
+     çizgisiyle vurgulanır — vadinin iki yanını saran dağlar hissini
+     güçlendiriyor. */
+  _mountains(ctx, off, baseY, w, h, color, rimColor, peakH, step, seed) {
+    const pts = [];
+    for (let x = -step; x <= w + step; x += step) {
+      const wx = x + off;
+      const idx = Math.floor(wx / step);
+      const y = baseY - hash(idx * 3.11 + seed) * peakH;
+      pts.push([x, y]);
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-step, h + 10);
+    for (const [x, y] of pts) ctx.lineTo(x, y);
+    ctx.lineTo(w + step, h + 10);
+    ctx.closePath();
+    ctx.fill();
+
+    if (rimColor) {
+      ctx.strokeStyle = rimColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts) ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+  }
 
   _hills(ctx, off, baseY, w, h, color, amp, freq, seed) {
     ctx.fillStyle = color;

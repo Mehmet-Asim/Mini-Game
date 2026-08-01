@@ -187,7 +187,12 @@ export class GameEngine {
     const w = Math.max(320, r.width);
     const h = Math.max(240, r.height);
     this.renderer.resize(w, h);
-    this.camera.resize(w, h);
+    /* Kamera renderer'ın GERÇEK iç tuval boyutunu kullanmalı, container'ın
+       CSS boyutunu değil. `pixelMode`da renderer 480×270'e sabitlenip
+       CSS ile büyütülüyor (bkz. renderer.js); kamera hâlâ CSS boyutunu
+       (ör. 1280×720) referans alsaydı dünya-ekran dönüşümü tutmaz,
+       görüntü kırpılıp aşırı yakınlaşmış görünürdü. */
+    this.camera.resize(this.renderer.w, this.renderer.h);
   }
 
   /* ======================================================================

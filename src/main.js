@@ -128,6 +128,7 @@ function navigateTo(view) {
   if (cleanupFn) { cleanupFn(); cleanupFn = null; }
 
   app.classList.toggle('in-game', view === 'game' || view === 'cinematic');
+  app.classList.toggle('showing-splash', view === 'splash');
 
   switch (view) {
     case 'setup':
