@@ -609,6 +609,12 @@ export class GameEngine {
              yüzden tek sayı yetiyor. */
           const mp0 = this.entities.movingPlatforms[0];
           if (mp0) ack.mt = Math.round(mp0.animTime * 1000) / 1000;
+          /* Asansörün onay anındaki yüksekliği. Platformun saatiyle aynı
+             işi görüyor: yeniden oynatma, oyuncuyu asansörün GEÇMİŞTEKİ
+             yüksekliğine karşı çözmeli. Yönle geri sarmak, asansör tam o
+             sırada uca dayandıysa yanlış sonuç verirdi. */
+          const lifts = this.entities.coopLifts;
+          if (lifts.length) ack.lf = lifts.map(l => Math.round(l.y));
           this.remoteAck = ack;
         } else {
           /* GİRDİ YOK → BU OYUNCUYU BU ADIMDA SİMÜLE ETME.
@@ -702,7 +708,12 @@ export class GameEngine {
        sürücü değil, DÜZELTİCİ (bkz. snapshot.js → applySnapshot). */
     for (const mp of e.movingPlatforms) mp.update(dt);
     for (const cp of e.crumbles) cp.update(dt);
-    if (!guest) this._updateCoop(dt);
+    /* Ortak asansör de aynı gerekçeyle misafirde yerel koşuyor: hareketi
+       doğrusal, host'un yönünü bilmek yeterli (bkz. CoopLift.stepNet).
+       Plaka/kapı mantığı hâlâ yalnızca host'ta — onlar oyuncu konumlarına
+       bağlı ve misafirin elindeki yoldaş konumu zaten gecikmeli. */
+    if (guest) { for (const lift of e.coopLifts) lift.stepNet(dt); }
+    else this._updateCoop(dt);
 
     /* ÇÖKEN BLOKLARIN KISA TARİHİ (yalnızca misafirde)
 

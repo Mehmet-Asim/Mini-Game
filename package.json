@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "server:dist": "node server/index.js --serve-dist",
+    "serve:slow": "node tools/throttle-serve.mjs 10 60 8099 dist",
     "check:scenes": "node tools/scene-check.mjs",
     "test:server": "node tools/server-test.mjs",
     "test:coop": "node tools/coop-test.mjs",

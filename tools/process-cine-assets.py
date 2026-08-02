@@ -6,6 +6,17 @@ Usage:
 Backgrounds are reduced to the 640x360 art grid with nearest-neighbour
 sampling. Sprite-sheet checkerboards are flood-cleared from the image edges,
 then both the cleaned atlases and named frame PNGs are exported.
+
+Output split matters:
+  * named frames  -> public/cine/sprites/   (the game loads these)
+  * cleaned atlas -> art/cine-masters/      (archive only, never served)
+
+The atlases used to land in public/ as well. Nothing ever read them -- not
+the game, not the build, not this script (its inputs come from the directory
+given on the command line) -- but Vite copies public/ verbatim, so 7.6 MB
+shipped in every deploy for nothing. They are kept because they are the
+*cleaned* masters: if the raw generated sheets are lost, these are the only
+source left to re-slice frames from.
 """
 
 from collections import deque
@@ -18,6 +29,9 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "public" / "cine"
 SPRITES = OUT / "sprites"
+# Temizlenmiş ana sayfalar — arşiv. public/ ALTINDA DEĞİL: oraya konursa
+# hiç indirilmedikleri hâlde her dağıtıma 7.6 MB ekleniyorlar.
+MASTERS = ROOT / "art" / "cine-masters"
 
 BACKGROUNDS = {
     "cine-intro-pixel.png": "intro-bg.webp",
@@ -202,7 +216,7 @@ def export_atlas(
     clean_components: bool = False,
 ) -> None:
     image = clear_checkerboard(Image.open(source))
-    image.save(SPRITES / atlas_name, optimize=True)
+    image.save(MASTERS / atlas_name, optimize=True)
     columns = len(names[0])
     rows = len(names)
     cell_height = image.height / rows
@@ -224,7 +238,12 @@ def export_atlas(
                     frame = frame.crop(alpha_box)
             if clean_components:
                 frame = keep_largest_island(frame)
-            frame.save(SPRITES / f"{frame_name}.png", optimize=True)
+            # KAYIPSIZ WebP -- oyunun yüklediği biçim (pixelSprites.js).
+            # PNG yazmak boru hattını sessizce bozardı: yeni kareler
+            # .png olarak düşer, oyun .webp arar ve eski kareleri kullanmaya
+            # devam ederdi. Kayıpsız olduğu için piksel farkı yok, PNG'ye
+            # göre ~%43 küçük (ölçüldü).
+            frame.save(SPRITES / f"{frame_name}.webp", "WEBP", lossless=True, method=6)
 
 
 def main() -> None:
@@ -234,6 +253,7 @@ def main() -> None:
     source_dir = Path(sys.argv[1]).resolve()
     OUT.mkdir(parents=True, exist_ok=True)
     SPRITES.mkdir(parents=True, exist_ok=True)
+    MASTERS.mkdir(parents=True, exist_ok=True)
 
     for source_name, output_name in BACKGROUNDS.items():
         source = source_dir / source_name

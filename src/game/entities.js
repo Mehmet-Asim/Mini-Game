@@ -223,6 +223,11 @@ export class CoopLift extends Entity {
     this.needAll = cfg.needAll !== false;
     this.riders = 0;
     this.dx = 0; this.dy = 0;
+    /* `dir` host'un o an gittiği yön (-1 yukarı, +1 aşağı, 0 durgun) ve
+       anlık görüntüyle misafire gidiyor. `netDir` misafirin elindeki son
+       kopyası — hareketi KENDİ 60 Hz adımında sürdürmek için (bkz. stepNet). */
+    this.dir = 0;
+    this.netDir = 0;
   }
 
   evaluate(players) {
@@ -248,6 +253,37 @@ export class CoopLift extends Entity {
     const ny = Math.abs(targetY - this.y) <= step ? targetY : this.y + dir * step;
     this.dy = ny - this.y;
     this.dx = 0;
+    this.y = ny;
+    this.dir = ny === targetY ? 0 : dir;
+    this.animTime += dt;
+  }
+
+  /**
+   * MİSAFİR TARAFI — host'un bildirdiği yönde kendi kareni ilerlet.
+   *
+   * Eskiden asansör misafirde HİÇ simüle edilmiyordu; `y` doğrudan anlık
+   * görüntüden yazılıyordu (engine.js → `if (!guest) this._updateCoop`).
+   * İki sonucu vardı:
+   *
+   *   · Zemin `tampon + rtt/2` kadar geride kalıyordu (100-350 ms → 58 px/sn
+   *     hızda 6-20 px sabit yükseklik hatası). Host misafiri başka bir
+   *     yükseklikte hesaplıyor, her uzlaştırma onu dikeyde çekiştiriyordu.
+   *   · `dy` saniyede 20 kez üretiliyordu; üstündeki oyuncu üç karelik
+   *     hareketi tek karede yiyip iki kare hiç almıyordu — titreme buydu.
+   *
+   * Hareket doğrusal olduğundan misafir YÖNÜ bilince aynı sonucu üretir;
+   * anlık görüntü artık sürücü değil düzeltici (hareketli platformdaki
+   * saat yaklaşımının aynısı, bkz. snapshot.js → applySnapshot).
+   */
+  stepNet(dt) {
+    this.dx = 0;
+    const dir = this.netDir || 0;
+    if (!dir) { this.dy = 0; this.animTime += dt; return; }
+    const spd = this.speed * (dir < 0 ? 1 : 0.55);
+    const lim = dir < 0 ? this.topY : this.baseY;
+    let ny = this.y + dir * spd * dt;
+    if (dir < 0 ? ny < lim : ny > lim) ny = lim;
+    this.dy = ny - this.y;
     this.y = ny;
     this.animTime += dt;
   }

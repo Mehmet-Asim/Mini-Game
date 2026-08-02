@@ -91,6 +91,12 @@ export class CoopSession {
     this.director = director;
     this.onSceneHold = onHold;
     this.onSceneOver = onSceneOver;
+    /* Bekletme İKİ AYRI SEBEPTEN gelebiliyor ve tek bayrakta tutmak
+       bunları birbirine eziyordu: ikisi de varlıklarını yüklerken karşı
+       taraf "bitirdim" deyince bayrak sıfırlanıyor, hâlâ yükleyen taraf
+       sahneyi kaçırıyordu. Artık ayrı tutulup VEYA'lanıyorlar. */
+    this._holdLocal = false;
+    this._holdRemote = false;
     this.sceneHold = false;
     this._clearTimer('scene');
     if (this.isHost && director) {
@@ -124,8 +130,23 @@ export class CoopSession {
    */
   holdScene(v) {
     const on = !!v;
-    if (this.isHost) this.sceneHold = on;   // sonraki yayında gider
-    else this.sendHalt(on);
+    if (this._holdLocal === on) return;
+    this._holdLocal = on;
+    if (this.isHost) this._syncSceneHold();   // birleşik değer sonraki yayında gider
+    else {
+      this.sendHalt(on);
+      /* Misafir KENDİ sahnesini gidiş-dönüşü beklemeden durdurur. Host'un
+         yayını zaten aynı sonucu ~250 ms sonra teyit edecek. */
+      this.onSceneHold?.(on || this._holdRemote);
+    }
+  }
+
+  /** Yerel + uzak bekletmeyi birleştirip uygula (yalnız değiştiyse) */
+  _syncSceneHold() {
+    const on = this._holdLocal || this._holdRemote;
+    if (on === this.sceneHold) return;
+    this.sceneHold = on;
+    this.onSceneHold?.(on);
   }
 
   /** Misafirin atlama isteği — zamanı host yönetiyor, kararı o uygular. */
@@ -252,9 +273,19 @@ export class CoopSession {
       if (m.done) { this.onSceneOver?.(); return; }
 
       /* Host beklettiyse SAATİNE UYMA — donmuş bir saate kilitlenmek
-         sahneyi geri sarıyor. Bunun yerine biz de bekliyoruz. */
-      this.onSceneHold?.(!!m.hold);
-      if (m.hold) return;
+         sahneyi geri sarıyor. Bunun yerine biz de bekliyoruz.
+
+         KENDİ beklememizi de hesaba katıyoruz: varlıklarımız hâlâ
+         yüklenirken host'un `hold: 0` yayını gelirse eski kod sahneyi
+         başlatıyordu. Sonuç, sprite'lar gelmemişken çizilen (prosedürel
+         yedeğe düşen) bir sahneydi. */
+      this._holdRemote = !!m.hold;
+      const held = this._holdLocal || this._holdRemote;
+      this.onSceneHold?.(held);
+      /* Beklerken saati ALMIYORUZ. Almak, bekletmenin tüm amacını
+         boşa çıkarırdı: yükleme biter bitmez yönetmen host'un çoktan
+         ilerlemiş zamanında olur ve sahnenin başı atlanırdı. */
+      if (held) return;
 
       /* Zaman taşımayan paket (yalnızca evre bildirimi) senkrona girmesin.
          `syncTo(undefined)` sahne saatini NaN'a çeviriyordu. */
@@ -280,8 +311,8 @@ export class CoopSession {
          `sceneHold` bir sonraki yayında misafire de gider, böylece iki
          taraf da aynı yerde bekler. */
       if (this.director) {
-        this.sceneHold = !!m.on;
-        this.onSceneHold?.(!!m.on);
+        this._holdRemote = !!m.on;
+        this._syncSceneHold();
       }
     }));
 

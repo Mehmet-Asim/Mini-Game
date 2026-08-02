@@ -128,7 +128,7 @@ function makeEngine(netMode, localIndex, levelIndex = 0, extraCb = {}) {
    Ana simülasyon
    -------------------------------------------------------------------------- */
 
-function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false, ridePlatform = false, contact = false }) {
+function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelIndex = 0, reckless = false, ridePlatform = false, rideLift = false, contact = false }) {
   const host = makeEngine('host', 0, levelIndex);
 
   /* Misafirin girdisi motorun SABİT ADIMINDAN yollanıyor — oyunda da
@@ -242,6 +242,25 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     }
   }
 
+  /* ORTAK ASANSÖR SENARYOSU
+     Asansör bölüm 1'in tek gerçek DİKEY hareketli zemini (hareketli
+     platformların hepsinde `rangeY: 0`). Uzun süre hiç ağ testi yoktu ve
+     misafirde yerel olarak simüle bile edilmiyordu: `y` doğrudan gecikmiş
+     anlık görüntüden yazılıyordu. Bu senaryo iki karakteri de asansöre
+     oturtuyor, sonra host'un karakterini aralıklarla indirip bindirerek
+     asansörü sürekli hareket halinde tutuyor. */
+  if (rideLift) {
+    for (const eng of [host, guest]) {
+      const lift = eng.entities.coopLifts[0];
+      if (!lift) continue;
+      for (const p of eng.players) {
+        p.x = lift.x + lift.w / 2 - p.w / 2;
+        p.y = lift.y - p.h;
+        p.vx = 0; p.vy = 0; p.grounded = true; p.onPlatform = lift;
+      }
+    }
+  }
+
   const upLink = new FakeNetwork({ latency, jitter, loss });     // misafir → host (tuşlar)
   const downLink = new FakeNetwork({ latency, jitter, loss });   // host → misafir (görüntü)
   const buffer = new SnapshotBuffer(100);
@@ -252,7 +271,8 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
   let sinceSnap = 0, sinceInput = 0;
   let maxSnapBytes = 0;
 
-  const samples = { peer: [], self: [], enemy: [], jerk: [], gate: 0, gateChecks: 0, offPath: [], hardSnaps: 0, snapCount: 0 };
+  const samples = { peer: [], self: [], enemy: [], jerk: [], gate: 0, gateChecks: 0, offPath: [], hardSnaps: 0, snapCount: 0, lift: [], liftJerk: [] };
+  let lastLiftDy = null;
   let lastPeer = null, lastHost = null;
   /* Işınlanma (ölüm/diriliş) anları: host konumu bir karede fizikle
      açıklanamayacak kadar sıçradıysa oraya işaret koyuyoruz. O pencerede
@@ -329,6 +349,50 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
       }
     }
 
+    if (rideLift) {
+      hi.right = hi.left = false; hi.jumpHeld = false;
+      gi.right = gi.left = false;
+
+      const hLift = host.entities.coopLifts[0];
+      /* Host'un karakterini 5 saniyede bir asansörden indir: `needAll`
+         yüzünden bir kişi inince asansör geri iniyor, böylece ölçüm
+         boyunca HAREKET HALİNDE kalıyor. Tek yönlü bir yükseliş 2.6 sn
+         sürüyor ve sonra duruyordu — durgun asansörde ölçüm anlamsız.
+
+         Aralık BİLEREK uzun. Kısa aralıkta (3 sn) ya da misafiri
+         zıplattığımızda asansörün yönü saniyede birkaç kez değişiyor;
+         yön iki oyuncunun da binili olmasına bağlı olduğundan misafir
+         değişimi ancak ağ gecikmesi kadar SONRA öğrenebiliyor. O senaryo
+         saf gecikmeyi ölçer, senkron kalitesini değil — ve iki sürüm
+         arasında hiçbir fark göstermiyordu (ölçüldü: 5.6 vs 5.1 px).
+         Gerçek oynanışta asansör saniyelerce aynı yöne gidiyor. */
+      const off = Math.floor(f / 300) % 2 === 1;
+      /* HOST'TA İKİ KARAKTERİ DE her kare oturtuyoruz. `needAll` yüzünden
+         asansör ancak İKİSİ de binikken yükseliyor; misafirin karakterini
+         kendi haline bırakınca host tarafında asansörün üstünde kalmıyor
+         (uzak girdi + fizik onu bir kere kaçırınca bir daha binmiyor) ve
+         asansör 8 px'lik bir bantta titreyip duruyordu — ölçüm anlamsızdı.
+         Ölçtüğümüz şey zaten oyuncu fiziği değil, ZEMİNİN yüksekliğinin
+         host ile misafirde aynı olup olmadığı. */
+      if (hLift) {
+        host.players.forEach((hp, pi) => {
+          if (off && pi === 0) { hp.x = hLift.x - 420; return; }
+          hp.x = hLift.x + hLift.w / 2 - hp.w / 2;
+          hp.y = hLift.y - hp.h;
+          hp.vy = 0; hp.grounded = true; hp.onPlatform = hLift;
+        });
+      }
+
+      /* Misafirin kendi karakteri de asansörün üstünde kalsın ki
+         `onPlatform` taşıması (dolayısıyla `dy`) gerçekten kullanılsın. */
+      const gLift = guest.entities.coopLifts[0];
+      if (gLift) {
+        const gp = guest.players[1];
+        gp.x = gLift.x + gLift.w / 2 - gp.w / 2;
+        if (!gp.grounded) { gp.y = gLift.y - gp.h; gp.vy = 0; gp.grounded = true; gp.onPlatform = gLift; }
+      }
+    }
+
     /* --------------------------------------------------------------------
        Ölümü ŞANSA BIRAKMA.
 
@@ -391,9 +455,18 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
       buffer.push(snap, clock);
     }
 
-    /* --- Misafir 100 ms geçmişi oynatır --- */
+    /* --- Misafir geçmişi oynatır ---
+       Dördüncü parametre ATLANMIŞTI ve `applySnapshot` sabit 100 ms
+       varsayıyordu. Oyunda geçilen değer `buffer.delay + rtt/2`
+       (session.js → applyIncoming): tampon uyarlanabilir, üstüne bir de
+       tek yön ağ gecikmesi biniyor. 150 ms'lik hatta gerçek değer 250 ms'yi
+       aşıyor; test bunun 100'ünü veriyordu. Zamana bağlı her şey (hareketli
+       platform saati, asansör, çöken blok) o kadar İLERİ SARILAMIYOR, yani
+       ölçüm ürünün gerçek davranışını değil testin kendi varsayımını
+       ölçüyordu. `latency` burada tek yön gecikme — 516. satırdaki kıyas
+       noktası da aynı toplamı kullanıyor. */
     const played = buffer.sample(clock);
-    if (played) applySnapshot(guest, played, 1);
+    if (played) applySnapshot(guest, played, 1, buffer.delay + latency);
 
     maxHostX = Math.max(maxHostX, host.players[1].x);
     maxGuestX = Math.max(maxGuestX, guest.players[1].x);
@@ -420,6 +493,25 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
       }
     }
     prevHostP0 = nowPs;
+
+    /* ORTAK ASANSÖR ÖLÇÜMÜ — kıyas noktası host'un ŞİMDİKİ yüksekliği,
+       gecikmiş kare DEĞİL. Sebebi: misafirin kendi karakteri "şimdi"ye
+       tahmin ediliyor ve host onu "şimdi"ye göre onaylıyor; ayağının
+       altındaki zemin de o ana ait olmalı. Gecikmiş kareyle kıyaslamak
+       hatayı gizlerdi (eski kod tam olarak o kareyi yazıyordu).
+
+       `liftJerk` ikinci arıza içindi: `dy` saniyede 20 kez üretilince
+       binici üç karelik hareketi tek karede yiyip iki kare hiç almıyordu. */
+    if (rideLift && played && f > 60) {
+      const hl = host.entities.coopLifts[0];
+      const gl = guest.entities.coopLifts[0];
+      /* Uçlarda değilken ölç. `dir`/`dy` gibi alanlara bakmak sürüme
+         bağımlı olurdu; uçta duran asansörde ölçüm zaten anlamsız. */
+      if (hl && gl && hl.y > hl.topY + 0.5 && hl.y < hl.baseY - 0.5) {
+        samples.lift.push(Math.abs(gl.y - hl.y));
+        samples.liftJerk.push(Math.abs(gl.dy - hl.dy));
+      }
+    }
 
     /* --- Ölçüm (ilk 2 saniye ısınma sayılmaz) ---
        Misafir bilerek 100 ms geriyi oynatıyor. Doğru karşılaştırma, onun
@@ -496,6 +588,8 @@ function simulate({ seconds = 12, latency = 60, jitter = 25, loss = 0, levelInde
     enemyAvg: avg(samples.enemy), enemyP95: p95(samples.enemy),
     jerkAvg: avg(samples.jerk), jerkP95: p95(samples.jerk), jerkMax: Math.max(0, ...samples.jerk),
     offPathP95: p95(samples.offPath), offPathMax: Math.max(0, ...samples.offPath),
+    liftAvg: avg(samples.lift), liftP95: p95(samples.lift), liftMax: Math.max(0, ...samples.lift),
+    liftJerkP95: p95(samples.liftJerk), liftSamples: samples.lift.length,
     teleports: teleports.length,
     gateAgree: samples.gateChecks ? samples.gate / samples.gateChecks : 1,
     hardSnapRate: samples.snapCount ? samples.hardSnaps / samples.snapCount : 0,
@@ -705,6 +799,37 @@ console.log(`\n[ölçüm] DİKEY platformda zıplayıp sağa-sola: ort ${ride.se
    muhtemelen `ahead` tahminini gürültüsüzleştirmek. */
 check('dikey platformda zıplarken uzlaştırma hatası < 6px', ride.selfAvg < 6,
   `ort ${ride.selfAvg.toFixed(1)}px`);
+
+/* ORTAK ASANSÖR — bölüm 1'in (Karanlık Orman) tek gerçek dikey zemini.
+   Düzeltmeden ÖNCE misafir asansörü hiç simüle etmiyordu; `y` ham olarak
+   gecikmiş anlık görüntüden yazılıyordu. Ölçülen (150 ms gecikme, 60 ms
+   dalgalanma, %5 kayıp):
+
+       yükseklik farkı  ort 19.7 → 2.1 px    p95 23.6 → 8.7 px
+       dy farkı         p95 1.33 → 0.97 px/kare
+
+   Düzeltme: yön ağdan geliyor, ara kareleri misafir kendi dolduruyor
+   (CoopLift.stepNet), anlık görüntü konumu `ahead` kadar ileri sarıp
+   yalnızca düzeltiyor ve yeniden oynatma asansörü de geri sarıyor.
+
+   TEPE değer (20 px) düşmüyor ve DÜŞEMEZ: asansörün yönü iki oyuncunun
+   da binili olmasına bağlı, misafir yön değişimini ancak ağ gecikmesi
+   kadar sonra öğrenebiliyor. Kalıcı sapma gitti, yön değişimindeki anlık
+   sapma kaldı. */
+const lift = simulate({ seconds: 14, latency: 150, jitter: 60, loss: 0.05, levelIndex: 0, rideLift: true });
+console.log(`\n[ölçüm] ORTAK ASANSÖRDE: yükseklik farkı ort ${lift.liftAvg.toFixed(1)}px · ` +
+  `p95 ${lift.liftP95.toFixed(1)}px · TEPE ${lift.liftMax.toFixed(1)}px · ` +
+  `dy farkı p95 ${lift.liftJerkP95.toFixed(2)}px/kare\n`);
+check('asansör senaryosu gerçekten ölçüm üretti', lift.liftSamples > 200,
+  `${lift.liftSamples} örnek`);
+check('asansör yüksekliği host ile hizalı (ort < 5px)', lift.liftAvg < 5,
+  `ort ${lift.liftAvg.toFixed(1)}px`);
+check('asansörde kalıcı yükseklik sapması yok (p95 < 12px)', lift.liftP95 < 12,
+  `p95 ${lift.liftP95.toFixed(1)}px`);
+check('asansör taşıması kare kare pürüzsüz (dy p95 < 1.1px)', lift.liftJerkP95 < 1.1,
+  `p95 ${lift.liftJerkP95.toFixed(2)}px`);
+check('asansörde uzlaştırma hatası sınırlı', lift.selfAvg < 6,
+  `ort ${lift.selfAvg.toFixed(1)}px`);
 
 const l3 = simulate({ seconds: 10, latency: 60, jitter: 20, loss: 0, levelIndex: 2, reckless: true });
 check('bölüm 3 (boss bölümü) senkron kalıyor', l3.peerAvg < 15, `ort ${l3.peerAvg.toFixed(1)}px`);

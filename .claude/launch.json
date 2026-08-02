@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "server"],
       "port": 8787
+    },
+    {
+      "name": "slow10",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "serve:slow"],
+      "port": 8099
     }
   ]
 }

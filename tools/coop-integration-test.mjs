@@ -324,6 +324,74 @@ async function runRealtime(sides, ms, onTick) {
 }
 
 /* ==========================================================================
+   2b. VARLIK YÜKLEMESİ ORTAK BEKLEMEDİR
+
+   Yavaş bağlantıdaki taraf sinematik sprite'larını çekerken (10 Mbps'te
+   ölçümle 3.2 sn) host sahneyi başlatmamalı. Eskiden hiç bildirilmiyordu:
+   host 4 Hz saat yayınlıyor, misafir `syncTo` ile ona kilitleniyor ve
+   yükleme bitince sahnenin BAŞINI atlamış oluyordu.
+   ========================================================================== */
+{
+  const { Director } = await import('../src/cinematic/director.js');
+  const { SCENES } = await import('../src/cinematic/scenes/index.js');
+  const config = { heroName: 'Mehmet', targetName: 'Ayşe', proposalText: 'Soru?' };
+
+  const mkSide = (net) => {
+    const s = new CoopSession(net, {});
+    const d = new Director(SCENES['intro'], { config });
+    /* cinematicView → applyHold ne yapıyorsa aynısı */
+    s.attachDirector(d, { onHold: (held) => { d.playing = !held; } });
+    d.seek(0);
+    return { s, d };
+  };
+
+  const hostNet = new FakeNet('host', 30);
+  const guestNet = new FakeNet('guest', 30);
+  hostNet.peer = guestNet; guestNet.peer = hostNet;
+
+  const host = mkSide(hostNet);
+  const guest = mkSide(guestNet);
+
+  const run = async (ms) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { host.d.update(1 / 60); guest.d.update(1 / 60); await sleep(6); }
+  };
+
+  /* --- Misafir yüklemeye başladı --- */
+  guest.s.holdScene(true);
+  await run(700);
+
+  check('misafir yüklerken HOST DA BEKLİYOR', host.d.time < 0.35,
+    `host=${host.d.time.toFixed(2)}s`);
+  check('misafir yüklerken kendi sahnesi de duruyor', guest.d.time < 0.35,
+    `misafir=${guest.d.time.toFixed(2)}s`);
+
+  /* --- Host da yüklemeye başladı, misafir bitirdi --- */
+  host.s.holdScene(true);
+  guest.s.holdScene(false);
+  await run(700);
+
+  check("MİSAFİR BİTİRDİ DİYE HOST'UN KENDİ BEKLEMESİ SİLİNMİYOR",
+    host.d.time < 0.35, `host=${host.d.time.toFixed(2)}s`);
+  check('host yüklerken misafir de bekliyor', guest.d.time < 0.35,
+    `misafir=${guest.d.time.toFixed(2)}s`);
+
+  /* --- İkisi de bitti --- */
+  host.s.holdScene(false);
+  await run(900);
+
+  check('iki taraf da bitince sahne akıyor', host.d.time > 0.4,
+    `host=${host.d.time.toFixed(2)}s`);
+  check('SAHNE BAŞTAN BAŞLIYOR (başı atlanmadı)', host.d.time < 1.6,
+    `host=${host.d.time.toFixed(2)}s`);
+  check('bekleme sonrası iki sahne senkron',
+    Math.abs(host.d.time - guest.d.time) < 0.5,
+    `host=${host.d.time.toFixed(2)} misafir=${guest.d.time.toFixed(2)}`);
+
+  host.s.destroy(); guest.s.destroy();
+}
+
+/* ==========================================================================
    3. Teklif seçimi — misafir seçiyor, host da devam ediyor
    ========================================================================== */
 {

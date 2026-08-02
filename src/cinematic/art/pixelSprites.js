@@ -10,65 +10,65 @@ import { loadImage } from '../layers.js';
 const BASE = 'cine/sprites/';
 const SOURCES = {
   hero: {
-    idle: 'hero-idle.png',
-    breathe: ['hero-breathe-low.png', 'hero-breathe-high.png', 'hero-breathe-low.png'],
+    idle: 'hero-idle.webp',
+    breathe: ['hero-breathe-low.webp', 'hero-breathe-high.webp', 'hero-breathe-low.webp'],
     walk: [
-      'hero-walk-contact-a.png', 'hero-walk-pass.png',
-      'hero-walk-contact-b.png', 'hero-walk-pass.png'
+      'hero-walk-contact-a.webp', 'hero-walk-pass.webp',
+      'hero-walk-contact-b.webp', 'hero-walk-pass.webp'
     ],
-    walkA: 'hero-walk-a.png',
-    walkB: 'hero-walk-b.png',
-    offer: ['hero-offer-anticipate.png', 'hero-offer-settle.png'],
-    offerHand: 'hero-offer.png',
+    walkA: 'hero-walk-a.webp',
+    walkB: 'hero-walk-b.webp',
+    offer: ['hero-offer-anticipate.webp', 'hero-offer-settle.webp'],
+    offerHand: 'hero-offer.webp',
     kneelMotion: [
-      'hero-attentive.png', 'hero-lean.png', 'hero-half-kneel.png',
-      'hero-full-kneel.png', 'hero-kneel-settle.png'
+      'hero-attentive.webp', 'hero-lean.webp', 'hero-half-kneel.webp',
+      'hero-full-kneel.webp', 'hero-kneel-settle.webp'
     ],
-    kneel: 'hero-kneel.png',
+    kneel: 'hero-kneel.webp',
     /* Gökyüzüne bakış — ejderha geçişinde tepki */
-    lookUp: 'hero-attentive.png',
-    recoil: 'hero-recoil.png',
-    sit: 'hero-sit.png'
+    lookUp: 'hero-attentive.webp',
+    recoil: 'hero-recoil.webp',
+    sit: 'hero-sit.webp'
   },
   companion: {
-    idle: 'companion-idle.png',
-    breathe: ['companion-breathe-low.png', 'companion-breathe-high.png', 'companion-breathe-low.png'],
+    idle: 'companion-idle.webp',
+    breathe: ['companion-breathe-low.webp', 'companion-breathe-high.webp', 'companion-breathe-low.webp'],
     walk: [
-      'companion-walk-contact-a.png', 'companion-walk-pass.png',
-      'companion-walk-contact-b.png', 'companion-walk-pass.png'
+      'companion-walk-contact-a.webp', 'companion-walk-pass.webp',
+      'companion-walk-contact-b.webp', 'companion-walk-pass.webp'
     ],
-    walkA: 'companion-walk-a.png',
-    walkB: 'companion-walk-b.png',
+    walkA: 'companion-walk-a.webp',
+    walkB: 'companion-walk-b.webp',
     offer: [
-      'companion-offer-anticipate.png', 'companion-reach.png',
-      'companion-reach-settle.png'
+      'companion-offer-anticipate.webp', 'companion-reach.webp',
+      'companion-reach-settle.webp'
     ],
-    offerHand: 'companion-offer.png',
-    headTurn: ['companion-attentive.png', 'companion-head-turn.png'],
-    lookUp: 'companion-head-turn.png',
-    recoil: 'companion-recoil.png',
-    recoilStrong: 'companion-recoil-strong.png',
-    sit: 'companion-sit.png'
+    offerHand: 'companion-offer.webp',
+    headTurn: ['companion-attentive.webp', 'companion-head-turn.webp'],
+    lookUp: 'companion-head-turn.webp',
+    recoil: 'companion-recoil.webp',
+    recoilStrong: 'companion-recoil-strong.webp',
+    sit: 'companion-sit.webp'
   },
   dragon: {
     flyMotion: [
-      'dragon-fly-high.png', 'dragon-fly-descend.png',
-      'dragon-fly-low.png', 'dragon-fly-rise.png', 'dragon-glide.png'
+      'dragon-fly-high.webp', 'dragon-fly-descend.webp',
+      'dragon-fly-low.webp', 'dragon-fly-rise.webp', 'dragon-glide.webp'
     ],
-    flyUp: 'dragon-fly-up.png',
-    flyDown: 'dragon-fly-down.png',
-    dead: 'dragon-dead.png',
-    deadFar: 'dragon-dead-far.png',
-    wakeEye: 'dragon-wake-eye.png',
-    wakeHead: 'dragon-wake-head.png',
-    wakeHalf: 'dragon-wake-half.png',
-    wakeAnticipate: 'dragon-wake-anticipate.png',
-    wakeRoar: 'dragon-wake-roar.png',
-    wakeLunge: 'dragon-wake-lunge.png',
-    eye: 'dragon-eye.png',
-    rise: 'dragon-rise.png',
-    roar: 'dragon-roar.png',
-    lunge: 'dragon-lunge.png'
+    flyUp: 'dragon-fly-up.webp',
+    flyDown: 'dragon-fly-down.webp',
+    dead: 'dragon-dead.webp',
+    deadFar: 'dragon-dead-far.webp',
+    wakeEye: 'dragon-wake-eye.webp',
+    wakeHead: 'dragon-wake-head.webp',
+    wakeHalf: 'dragon-wake-half.webp',
+    wakeAnticipate: 'dragon-wake-anticipate.webp',
+    wakeRoar: 'dragon-wake-roar.webp',
+    wakeLunge: 'dragon-wake-lunge.webp',
+    eye: 'dragon-eye.webp',
+    rise: 'dragon-rise.webp',
+    roar: 'dragon-roar.webp',
+    lunge: 'dragon-lunge.webp'
   }
 };
 
@@ -178,11 +178,11 @@ export function drawPixelActor(ctx, kind, actor, t, fallback) {
    ========================================================================== */
 
 const FLY_CAL = {
-  'dragon-fly-up.png':      { s: 0.617, hy: 223 },
-  'dragon-fly-high.png':    { s: 0.877, hy: 175 },
-  'dragon-bank.png':        { s: 1.000, hy: 54 },
-  'dragon-fly-down.png':    { s: 0.617, hy: 50 },
-  'dragon-fly-descend.png': { s: 1.064, hy: 40 }
+  'dragon-fly-up.webp':      { s: 0.617, hy: 223 },
+  'dragon-fly-high.webp':    { s: 0.877, hy: 175 },
+  'dragon-bank.webp':        { s: 1.000, hy: 54 },
+  'dragon-fly-down.webp':    { s: 0.617, hy: 50 },
+  'dragon-fly-descend.webp': { s: 1.064, hy: 40 }
 };
 
 /** Kalibrasyonun referans aldığı kafa yüksekliği (dragon-bank.png) */
@@ -193,12 +193,12 @@ const FLY_HEAD_H = 34;
 /* Kanat çırpma döngüsü: yukarı → yarı → açık → aşağı → açık → yarı.
    Gidiş-dönüş (ping-pong) olduğu için başa dönerken sıçrama olmuyor. */
 const FLY_CYCLE = [
-  'dragon-fly-up.png',
-  'dragon-fly-high.png',
-  'dragon-bank.png',
-  'dragon-fly-down.png',
-  'dragon-bank.png',
-  'dragon-fly-high.png'
+  'dragon-fly-up.webp',
+  'dragon-fly-high.webp',
+  'dragon-bank.webp',
+  'dragon-fly-down.webp',
+  'dragon-bank.webp',
+  'dragon-fly-high.webp'
 ];
 
 function dragonFrame(options) {

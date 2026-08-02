@@ -134,7 +134,11 @@ export function serializeSnapshot(eng, tick) {
     /* Co-op mekanizmaları */
     pl: e.plates.map(p => (p.active ? 1 : 0) | (p.locked ? 2 : 0)),
     ga: e.gates.map(g => r2(g.open) + (g.latched ? 1000 : 0)),
-    lf: e.coopLifts.map(l => r1(l.y)),
+    /* Ortak asansör: konumun YANINDA yön de gidiyor. Misafir yönü bilince
+       kareler arasını kendi dolduruyor; yalnız konum göndermek onu tampon
+       gecikmesi kadar geride bırakıyor ve üstündeki oyuncuyu her pakette
+       dikeyde çekiştiriyordu (bkz. CoopLift.stepNet). */
+    lf: e.coopLifts.map(l => ({ y: r1(l.y), d: l.dir | 0 })),
 
     /* Hareketli platform: KONUM DEĞİL SAAT gönderiliyor.
        Konum göndermek platformu misafirde tampon gecikmesi kadar geride
@@ -463,11 +467,37 @@ export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DE
     g.latched = v >= 1000;
     g.open = g.latched ? v - 1000 : v;
   });
+  /* Anlık görüntü `delayMs` kadar GEÇMİŞTEN oynatılıyor (interpolasyon
+     tamponu + tek yön ağ gecikmesi). Zamana bağlı her şeyi "şimdi"ye
+     taşımak için bu kadar ileri sarmak gerekiyor. */
+  const ahead = Math.max(0, delayMs) / 1000;
+
+  /* --- Ortak asansör: yönü kur, arasını misafir kendi doldursun ---
+     Ham `y` yazmak asansörü tampon gecikmesi kadar geride bırakıyordu ve
+     `dy` saniyede 60 değil 20 kez üretiliyordu; ikisi de üstündeki oyuncuyu
+     dikeyde sarsıyordu. Artık konum yerel olarak ilerliyor (engine.js →
+     `lift.stepNet`), anlık görüntü yalnızca hedefi düzeltiyor.
+
+     Hareketli platformdaki eşik mantığının aynısı: küçük sapmada yumuşak
+     sürükle (her pakette zorlamak mikro sıçrama üretiyor), gerçek kopukluk
+     olduğunda tek seferde hizala. */
   e.coopLifts.forEach((l, i) => {
-    const y = snap.lf[i];
-    if (y === undefined) return;
-    l.dy = y - l.y;
-    l.y = y;
+    const s = snap.lf[i];
+    if (!s || !Number.isFinite(s.y)) return;
+    l.netDir = s.d | 0;
+    /* Host'un o andaki yüksekliğini `ahead` kadar ileri sar */
+    let want = s.y;
+    if (l.netDir) {
+      const spd = l.speed * (l.netDir < 0 ? 1 : 0.55);
+      const lim = l.netDir < 0 ? l.topY : l.baseY;
+      want += l.netDir * spd * ahead;
+      if (l.netDir < 0 ? want < lim : want > lim) want = lim;
+    }
+    const drift = want - l.y;
+    /* `dy`'ye DOKUNMA: taşıma o kareki gerçek hareketi kullanmalı, yoksa
+       düzeltme miktarı biniciye ikinci kez uygulanıp onu fırlatır. */
+    if (Math.abs(drift) > 14) l.y = want;
+    else l.y += drift * 0.15;
   });
 
   /* --- Hareketli platformlar: SAATİ kur, konumu misafir kendi hesaplasın ---
@@ -481,7 +511,6 @@ export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DE
      Sapma küçükken saate dokunmuyoruz: her pakette saati zorlamak
      hareketi mikro-sıçratıyor. Büyük sapma (sekme/duraklama sonrası)
      tek seferde toparlanıyor. */
-  const ahead = Math.max(0, delayMs) / 1000;
   e.movingPlatforms.forEach((m, i) => {
     const s = snap.mp[i];
     if (!s || !Number.isFinite(s.t)) return;
@@ -523,15 +552,30 @@ export function applySnapshot(eng, snap, localIndex = 1, delayMs = NET.INTERP_DE
        gerçekten tetiklenmediğini söylediği durum kendini bir sonraki
        fazda zaten düzeltir. */
     const guestLeads = c.phase === 'shake' && s.p === 'idle';
-    if (!guestLeads) {
-      c.phase = s.p;
-      c.solid = !!s.s;
-      if (Number.isFinite(s.tm)) c.timer = s.tm;
-      if (Number.isFinite(s.vy)) c.vy = s.vy;
-      /* Düşerken y'yi host'a zorlamak sıçratıyor; yerel fizik zaten aynı
-         ivmeyle sürüyor, sadece belirgin sapmada topluyoruz. */
-      if (c.phase !== 'fall' || Math.abs(s.y - c.y) > 24) c.y = s.y;
+    if (guestLeads) return;
+
+    /* HOST'UN KAYDINI AL, SONRA `ahead` KADAR İLERİ SAR.
+       Ham uygulamak sayacı her pakette tampon gecikmesi kadar GERİ
+       alıyordu. Sayaç geri saydığı için eski değer daha büyük değer
+       demek: misafirdeki blok host'unkinden 0.1-0.35 sn GEÇ düşüyor,
+       misafir host'un çoktan yok saydığı bir zeminde duruyor ve her
+       uzlaştırma onu aşağı çekiyordu — "bölüm 2/3'te dikey sapma" buydu.
+       Durum makinesi deterministik, o yüzden ileri sarılabiliyor. */
+    const prevY = c.y;
+    c.phase = s.p;
+    c.solid = !!s.s;
+    if (Number.isFinite(s.tm)) c.timer = s.tm;
+    if (Number.isFinite(s.vy)) c.vy = s.vy;
+    c.y = s.y;
+    for (let left = ahead; left > 1e-4; ) {
+      const step = Math.min(1 / 60, left);
+      c.update(step);
+      left -= step;
     }
+
+    /* Düşerken y'yi zorlamak sıçratıyor; yerel fizik zaten aynı ivmeyle
+       sürüyor, sadece belirgin sapmada topluyoruz. */
+    if (c.phase === 'fall' && Math.abs(c.y - prevY) <= 24) c.y = prevY;
   });
 
   /* --- Boss ---
@@ -714,7 +758,7 @@ export function reconcileLocal(eng, snap, localIndex, pending) {
     p.invuln = ak.iv ?? 0;
   }
 
-  replayPending(eng, p, pending, ak.mt);
+  replayPending(eng, p, pending, ak.mt, ak.lf);
   return err;
 }
 
@@ -735,7 +779,7 @@ const MAX_REPLAY = 40;
 /* Tek örnek yeniden kullanılıyor — saniyede 20 kez çağrılıyor, çöp üretmesin */
 let _replayInput = null;
 
-function replayPending(eng, p, pending, hostPlatformTime) {
+function replayPending(eng, p, pending, hostPlatformTime, hostLiftY) {
   if (!pending.length || !eng.level) return;
 
   if (!_replayInput) _replayInput = new RemoteInput();
@@ -784,10 +828,36 @@ function replayPending(eng, p, pending, hostPlatformTime) {
      YANLIŞ FAZA götürüyor ve dikey platformda zıplarken iniş karesini
      kaydırıp büyük sapma üretiyordu. Onay yoksa (eski host, ilk paketler)
      eskisi gibi kendi saatimizden geriye sayıyoruz. */
-  const seekBase = Number.isFinite(hostPlatformTime) ? hostPlatformTime : null;
+  /* `ak.mt` BEKLEYEN LİSTENİN BAŞINA ait, oynatmanın başladığı yere değil.
+     Liste tavana dayanınca (`start > 0` — yüksek gecikme ya da kayıpta 40+
+     onaylanmamış girdi birikiyor) baştaki kareler atlanıyor; saati olduğu
+     gibi kurmak platformu `start/60` saniye YANLIŞ FAZA götürüyordu. */
+  const seekBase = Number.isFinite(hostPlatformTime)
+    ? hostPlatformTime + start * REPLAY_DT
+    : null;
   for (const s of saved) {
     s.m.seek(seekBase !== null ? seekBase : s.animTime - frames * REPLAY_DT);
   }
+
+  /* --- Ortak asansör de geri sarılıyor ---
+     Eskiden sarılmıyordu: oynatma, oyuncuyu asansörün ŞİMDİKİ (üstelik
+     gecikmeli) yüksekliğine karşı çözüyor, `stepNet`'in `dy`'si her
+     oynatma karesinde yeniden uygulanıyordu. Hareket doğrusal, ama uca
+     dayanma anını yönle geri hesaplamak yanlış olurdu — bu yüzden host
+     onayla birlikte o andaki yüksekliği de yolluyor (engine.js → ack.lf). */
+  const lifts = eng.entities?.coopLifts || [];
+  const savedLifts = lifts.map(l => ({ l, y: l.y, dy: l.dy, animTime: l.animTime }));
+  savedLifts.forEach((s, i) => {
+    const hy = Array.isArray(hostLiftY) ? hostLiftY[i] : undefined;
+    if (Number.isFinite(hy)) {
+      s.l.y = hy;
+      /* Atlanan kareler kadar ileri al — `seekBase` ile aynı gerekçe */
+      for (let k = 0; k < start; k++) s.l.stepNet(REPLAY_DT);
+    } else {
+      for (let k = 0; k < frames; k++) s.l.stepNet(-REPLAY_DT);
+    }
+    s.l.dy = 0;
+  });
 
   /* Çöken bloklar geri sarılamıyor (tetiklemeye bağlı durum makinesi),
      bu yüzden motor son karelerini saklıyor — bkz. engine.js. Şimdiki
@@ -825,6 +895,10 @@ function replayPending(eng, p, pending, hostPlatformTime) {
       for (const s of saved) s.m.update(REPLAY_DT);
       worldMoved = true;
     }
+    if (savedLifts.length) {
+      for (const s of savedLifts) s.l.stepNet(REPLAY_DT);
+      worldMoved = true;
+    }
     /* Çöken blokları o karedeki hâline getir. `i` ne kadar geride?
        Son bekleyen kayıt "şimdi"ye denk geliyor. Tarih kısaysa (oyun
        yeni başladıysa) o kareyi olduğu gibi bırakıyoruz — yanlış bir
@@ -857,11 +931,14 @@ function replayPending(eng, p, pending, hostPlatformTime) {
     s.m.x = s.x; s.m.y = s.y;
     s.m.dx = s.dx; s.m.dy = s.dy;
   }
+  for (const s of savedLifts) {
+    s.l.y = s.y; s.l.dy = s.dy; s.l.dx = 0; s.l.animTime = s.animTime;
+  }
   for (const s of crumbleNow) {
     s.c.phase = s.phase; s.c.timer = s.timer; s.c.vy = s.vy;
     s.c.y = s.y; s.c.solid = s.solid; s.c.shakeOff = s.shakeOff; s.c.animTime = s.animTime;
   }
-  if (saved.length || crumbleNow.length) eng._rebuildSolids();
+  if (saved.length || crumbleNow.length || savedLifts.length) eng._rebuildSolids();
 
   p.pendingArrow = savedArrow;
 }
@@ -1119,9 +1196,9 @@ function blend(a, b, t, spanMs = 1000 / NET.SNAPSHOT_HZ) {
     return ma ? { t: lerp(ma.t, mb.t) } : mb;
   });
 
-  out.lf = b.lf.map((yb, i) => {
-    const ya = a.lf[i];
-    return ya === undefined ? yb : lerp(ya, yb);
+  out.lf = b.lf.map((lb, i) => {
+    const la = a.lf[i];
+    return la === undefined ? lb : { y: lerp(la.y, lb.y), d: lb.d };
   });
 
   out.ga = b.ga.map((gb, i) => {

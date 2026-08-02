@@ -179,9 +179,46 @@ export function renderCinematicView(container, opts = {}) {
     ticker = createTicker((now, visible) => loop(now, visible));
     ticker.start();
   }
-  /* Arka plan ve sprite'lar ilk kareden önce hazır olsun; yükleme hatasında
-     hybrid katmanlar prosedürel çizime düşer ve sahne yine başlar. */
-  Promise.all([preloadScene(scene), preloadPixelSprites()]).finally(startLoop);
+  /* ---------- Varlık yüklemesi ----------
+     Arka plan ve sprite'lar ilk kareden önce hazır olsun; yükleme hatasında
+     hybrid katmanlar prosedürel çizime düşer ve sahne yine başlar.
+
+     CO-OP'TA YÜKLEME ORTAK BİR BEKLEMEDİR. Eskiden bu tamamen sessizdi:
+     yavaş bağlanan taraf yüklerken host sahne saatini 4 Hz yayınlamayı
+     sürdürüyor, misafir `syncTo` ile ona kilitleniyordu. Yükleme bitip
+     döngü başladığında yönetmen çoktan host'un zamanındaydı — yani yavaş
+     taraf sahnenin İLK SANİYELERİNİ hiç görmüyordu. 10 Mbps'lik bir hatta
+     sprite yüklemesi ölçümle 3.2 sn; teklif sahnesinin başı tam o kadar.
+
+     `onLoadingChange` bunu dışarı bildiriyor; main.js onu
+     `session.holdScene()`e bağlıyor ve iki taraf da aynı yerden başlıyor. */
+  let loading = true;
+  let onLoading = null;
+
+  function setLoading(v) {
+    if (loading === !!v) return;
+    loading = !!v;
+    onLoading?.(loading);
+  }
+
+  /* GÜVENLİK SÜRESİ — takılı bir istek iki oyuncuyu birden kilitlemesin.
+     `preloadScene`/`preloadPixelSprites` hata durumunda çözülüyor ama
+     ASILI KALAN bir istek (hat kopmuş, cevap hiç gelmiyor) hiç
+     çözülmüyor. O hâlde beklemeyi bırakıp sahneyi başlatıyoruz: eksik
+     sprite prosedürel yedeğe düşer, sonsuza dek donmuş bir sahneden
+     kat kat iyidir. */
+  const loadGuard = setTimeout(() => {
+    if (!loading) return;
+    console.warn('[cinematic] varlık yüklemesi 12 sn sürdü, sahne yine de başlıyor');
+    setLoading(false);
+    startLoop();
+  }, 12000);
+
+  Promise.all([preloadScene(scene), preloadPixelSprites()]).finally(() => {
+    clearTimeout(loadGuard);
+    setLoading(false);
+    startLoop();
+  });
 
   /* ---------- Bekleme ----------
      Sekme gizlenince sahneyi DURDURMUYORUZ.
@@ -205,7 +242,11 @@ export function renderCinematicView(container, opts = {}) {
     frame.classList.toggle('is-held', netHold);
     if (!netHold) {
       last = performance.now();
-      if (!director.ended) startLoop();
+      /* `loading` şartı ŞART. Bu fonksiyon her SCENE paketinde (saniyede 4)
+         `netHold=false` ile çağrılıyor; eski hâlinde varlıklar henüz
+         gelmemişken döngüyü başlatıyor ve sahne prosedürel yedekle
+         çiziliyordu. Yüklemenin bitişi zaten kendi `startLoop`unu çağırıyor. */
+      if (!director.ended && !loading) startLoop();
     }
   }
 
@@ -279,6 +320,11 @@ export function renderCinematicView(container, opts = {}) {
   function cleanup(soft = false) {
     if (destroyed) return;
     destroyed = true;
+    /* BEKLETMEYİ MUTLAKA BIRAK. Sahne yükleme bitmeden kapanabiliyor
+       (host atladı, sahne değişti, oyuncu çıktı). Bırakmazsak karşı taraf
+       bizim yüzümüzden sonsuza dek beklemede kalırdı. */
+    clearTimeout(loadGuard);
+    setLoading(false);
     stopLoop();
     ro.disconnect();
     window.removeEventListener('keydown', onKey);
@@ -294,6 +340,15 @@ export function renderCinematicView(container, opts = {}) {
   cleanup.submitChoice = (id) => director.submitChoice(id);
   /** Karşı taraf bekletti / devam etti */
   cleanup.setNetHold = (v) => { netHold = !!v; applyHold(); };
+  /**
+   * Varlık yüklemesi başlayınca/bitince haber ver — co-op'ta karşı taraf
+   * beklesin diye. Kaydolurken yükleme çoktan bittiyse hiç çağrılmaz;
+   * bekletecek bir şey yoktur.
+   */
+  cleanup.onLoadingChange = (fn) => {
+    onLoading = fn;
+    if (loading) fn(true);
+  };
   /** Karşı taraf sahneyi bitirdi — biz de kapatalım (co-op senkronu) */
   cleanup.finish = () => director.finish();
   return cleanup;

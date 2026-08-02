@@ -223,11 +223,21 @@ function navigateTo(view) {
       });
       session?.attachDirector(ctrl.director, {
         onHold: (held) => ctrl.setNetHold(held),
+        /* Bkz. aşağıdaki onLoadingChange — bağlama SIRASI önemli:
+           `attachDirector` bekletme bayraklarını sıfırlıyor, o yüzden
+           yükleme bildirimi ondan SONRA bağlanmalı. */
         /* Host sahneyi atladı ya da bitirdi. Saat yayını kesildiği için
            misafir yeni zamanı öğrenemez; sahneyi kapatmasını söylüyoruz.
            Cevapsız teklifte `finish()` hiçbir şey yapmaz. */
         onSceneOver: () => ctrl.finish()
       });
+
+      /* VARLIK YÜKLEMESİ ORTAK BİR BEKLEMEDİR.
+         Yavaş bağlantıdaki taraf sprite'ları çekerken karşı taraf sahneyi
+         başlatmasın; yoksa yavaş olan sahnenin ilk saniyelerini hiç
+         görmüyor (ölçüm: 10 Mbps'te 3.2 sn). `attachDirector`'dan SONRA
+         bağlanıyor çünkü o çağrı bekletme bayraklarını sıfırlıyor. */
+      if (session) ctrl.onLoadingChange?.((busy) => session.holdScene(busy));
 
       /* Host, misafirin cevabını ağdan alıp KENDİ yönetmenine uygular.
          Yoksa host'un sahnesi seçim ekranında sonsuza dek beklerdi:

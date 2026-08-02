@@ -356,7 +356,20 @@ export const introScene = {
     { t: 1.8,  dur: 4.6, text: S.intro.c1, pos: 'bottom', style: 'whisper', typeDur: 0.72 },
     { t: 6.8,  dur: 5.0, text: S.intro.c2, pos: 'bottom', style: 'whisper', typeDur: 0.78 },
     { t: 12.4, dur: 4.4, text: S.intro.c3, pos: 'bottom', style: 'normal', typeDur: 0.85 },
-    { t: 20.6, dur: 3.4, text: S.intro.c4, speaker: '{hero}', pos: 'bottom', style: 'normal', typeDur: 0.48 },
+    /* İSİM KARTI EL UZATILDIĞI ANDA (22.8) TEMİZLENİR.
+       Eskiden `t: 20.6, dur: 3.4` idi, yani 24.0'a kadar duruyordu — ama
+       c5 23.2'de başlıyor. İkisi de `pos: 'bottom'` ve kartlar oraya
+       MUTLAK konumlanıyor (`.cine-card--bottom { bottom: 11% }`), yani
+       üst üste biniyorlardı: t=23.5'te isim %15 opaklıkta uzun repliğin
+       arkasında hayalet gibi kalıyordu. Muhtemelen c5, el uzatma anına
+       hizalanmak için öne çekilirken c4'ün süresi güncellenmemiş.
+
+       Kartı KISALTMAK yerine ÖNE ALDIM: öncesinde 3.8 sn boş zaman vardı
+       (c3 16.8'de bitiyor), dolayısıyla ismin ekranda kalma süresinden
+       feda etmek gerekmiyor. Artık isim, kahraman elini uzatırken
+       siliniyor ve repliğe 0.4 sn boşluk kalıyor — sahnedeki diğer
+       bütün kart geçişleriyle aynı ritim. */
+    { t: 19.6, dur: 3.2, text: S.intro.c4, speaker: '{hero}', pos: 'bottom', style: 'normal', typeDur: 0.48, fadeOut: 0.7 },
     { t: 23.2, dur: 4.4, text: S.intro.c5, speaker: '{hero}', pos: 'bottom', style: 'normal', typeDur: 0.82 },
     /* 'hero' stili tek kelimelik/isim gibi KISA vurgular için (bkz. c4);
        burada tam bir cümle olduğu için o boyutta (46px, 3 satır) aniden
