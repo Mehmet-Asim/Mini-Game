@@ -183,19 +183,21 @@ export function renderGameView(container, config, onComplete, opts = {}) {
       const item = document.createElement('article');
       item.className = `game-chat-message ${self ? 'is-self' : 'is-peer'}`;
 
-      const meta = document.createElement('div');
-      meta.className = 'game-chat-meta';
+      /* İsim METNİN YANINDA, saat yok. Ayrı bir üst satır + saat her mesajı
+         48px yapıyordu; 6 mesaj oyun alanının %67'sini kapatıyordu. Bu artık
+         geriye dönük bir sohbet kaydı değil, oyunun üstünde duran canlı bir
+         katman — saat okunacak bir şey değil, kapladığı yer ise sorun. */
       const who = document.createElement('strong');
       who.textContent = self ? 'Sen' : name;
-      const time = document.createElement('time');
-      time.textContent = new Date(message.ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
-      meta.append(who, time);
 
       const text = document.createElement('p');
       text.textContent = message.text;
-      item.append(meta, text);
+      item.append(who, text);
       chatMessages.appendChild(item);
-      while (chatMessages.children.length > 40) chatMessages.firstElementChild.remove();
+      /* Sohbet oyunun üstünde sürekli duruyor, geçmiş için ayrı bir panel
+         yok — en yeni 6 mesaj kalıyor, eskisi düşüyor. Daha fazlası sol
+         üstteki oyun alanını kapatıyor. */
+      while (chatMessages.children.length > 6) chatMessages.firstElementChild.remove();
       chatMessages.scrollTop = chatMessages.scrollHeight;
 
       if (!chatEl.classList.contains('is-open')) {
@@ -205,11 +207,22 @@ export function renderGameView(container, config, onComplete, opts = {}) {
       }
     };
 
+    /* Baştan açık — ama ODAKLANMADAN. setChatOpen(true) kutuya odaklanıyor;
+       bölüm başında çağrılsa WASD/ok tuşları oyuna değil sohbete giderdi ve
+       oyuncu neden yürüyemediğini anlamazdı. Odak sadece kullanıcı düğmeye
+       ya da kutuya kendi tıklayınca veriliyor. */
+    chatEl.classList.add('is-open');
+    chatBtn.setAttribute('aria-expanded', 'true');
+
     chatBtn.addEventListener('click', () => setChatOpen(!chatEl.classList.contains('is-open')));
     chatClose.addEventListener('click', () => setChatOpen(false));
     chatInput.addEventListener('keydown', (event) => {
+      /* Yazarken tuşlar oyuna GİTMEMELİ, yoksa mesaj yazan oyuncu aynı
+         anda zıplayıp koşuyor. */
       event.stopPropagation();
-      if (event.key === 'Escape') { event.preventDefault(); setChatOpen(false); }
+      /* Escape paneli GİZLEMİYOR, sadece odağı bırakıp kontrolü oyuna
+         veriyor — sohbet artık kalıcı olarak ekranda. */
+      if (event.key === 'Escape') { event.preventDefault(); chatInput.blur(); }
     });
     chatForm.addEventListener('submit', (event) => {
       event.preventDefault();

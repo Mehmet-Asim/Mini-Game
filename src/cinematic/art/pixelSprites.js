@@ -51,9 +51,19 @@ const SOURCES = {
     sit: 'companion-sit.webp'
   },
   dragon: {
+    /* ÇIRPMA DÖNGÜSÜNÜN BENZERSİZ KARELERİ — FLY_CYCLE bunlardan kuruluyor.
+       Burası aynı zamanda ön yükleme listesinin kaynağı (bkz. ALL_SOURCES),
+       yani çizilen her kare kesin olarak önceden yükleniyor.
+
+       Eskiden bu liste ÖLÜYDÜ: kimse okumuyordu, üstelik döngüde hiç
+       kullanılmayan kareleri (fly-descend/low/rise/glide) sayıyordu.
+       Döngünün gerçekten çizdiği `dragon-bank` ise listede olmadığı için
+       ön yüklenmiyordu — WebP dönüşümünde de bu yüzden atlandı ve dosya
+       hiç üretilmedi. Sonuç: çırpmanın 6 karesinden 2'si 404 veriyor,
+       ejderha geçerken kanatlar bir anlığına yok oluyordu. */
     flyMotion: [
-      'dragon-fly-high.webp', 'dragon-fly-descend.webp',
-      'dragon-fly-low.webp', 'dragon-fly-rise.webp', 'dragon-glide.webp'
+      'dragon-fly-up.webp', 'dragon-fly-high.webp',
+      'dragon-bank.webp', 'dragon-fly-down.webp'
     ],
     flyUp: 'dragon-fly-up.webp',
     flyDown: 'dragon-fly-down.webp',
@@ -191,15 +201,13 @@ const FLY_REF_HEAD = 50;
 const FLY_HEAD_H = 34;
 
 /* Kanat çırpma döngüsü: yukarı → yarı → açık → aşağı → açık → yarı.
-   Gidiş-dönüş (ping-pong) olduğu için başa dönerken sıçrama olmuyor. */
-const FLY_CYCLE = [
-  'dragon-fly-up.webp',
-  'dragon-fly-high.webp',
-  'dragon-bank.webp',
-  'dragon-fly-down.webp',
-  'dragon-bank.webp',
-  'dragon-fly-high.webp'
-];
+   Gidiş-dönüş (ping-pong) olduğu için başa dönerken sıçrama olmuyor.
+
+   Kare adları ELLE YAZILMIYOR, SOURCES.dragon.flyMotion'dan geliyor:
+   ön yükleme listesi de oradan türüyor, dolayısıyla "çizilen ama
+   yüklenmeyen kare" durumu artık oluşamaz. */
+const [FLY_UP, FLY_HIGH, FLY_BANK, FLY_DOWN] = SOURCES.dragon.flyMotion;
+const FLY_CYCLE = [FLY_UP, FLY_HIGH, FLY_BANK, FLY_DOWN, FLY_BANK, FLY_HIGH];
 
 function dragonFrame(options) {
   if (options.flying) {

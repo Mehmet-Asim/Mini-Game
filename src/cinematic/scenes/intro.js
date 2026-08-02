@@ -33,8 +33,18 @@ const SUN = { x: VW * 0.78, y: VH * 0.26 };
    -------------------------------------------------------------------------- */
 
 function shadowPass(t) {
-  /* 27.0 → 31.0 arasında soldan sağa süzülür */
-  return clamp01((t - 27) / 4);
+  /* 26.5 → 31.5 arasında soldan sağa süzülür.
+
+     Eskiden 4 saniyeydi: ejderha en yakın noktada bir kanat çırpışında
+     2.07 GÖVDE BOYU yol alıyordu. Gerçek bir kanatlı 0.5–1 gövde boyu
+     alır; bu oranda kanatlar neredeyse yerinde duruyor, gövde kayıyor —
+     uçmak değil, süzülen bir çıkartma gibi görünüyordu.
+
+     5 saniyede oran 1.65'e iniyor. Pencere iki uçtan da eşit açıldı,
+     yani ORTA NOKTA t=29.0'da SABİT kaldı: sarsıntı (28.75) ve
+     kahramanın başını kaldırması (27.9) hâlâ ejderhanın en yakın anına
+     denk geliyor. */
+  return clamp01((t - 26.5) / 5);
 }
 
 /* ==========================================================================
@@ -400,7 +410,10 @@ export const introScene = {
     { t: 20.4, sfx: 'nameChime' },
     { t: 22.9, sfx: 'clothRustle' },
     { t: 24.0, sfx: 'handChime' },
-    { t: 27.3, sfx: 'dragonRoarFar' },   /* uzaktan belirirken */
+    /* Geçiş 26.5'te başladığı için bu da 27.3'ten öne alındı: yerinde
+       kalsaydı ejderha çoktan %92 görünürken "uzaktan geliyor" sesi
+       çalacaktı. Şimdi yine ~%45 görünürlükte, yani belirirken. */
+    { t: 26.9, sfx: 'dragonRoarFar' },   /* uzaktan belirirken */
     { t: 28.8, sfx: 'wingWhoosh' }       /* tam tepeden geçerken */
   ]
 };

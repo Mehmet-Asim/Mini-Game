@@ -346,64 +346,87 @@ kbd {
 .hud-chat-badge.show { display: flex; }
 
 /* ---------- Oyun içi sohbet ---------- */
+/* SOL ÜSTTE, SÜREKLİ AÇIK.
+   Eskiden sağ üstte kapalı bir panELdi ve rozetle haber veriyordu — mesaj
+   gelince paneli açmak gerekiyordu, yani oyun ortasında iki tık. Artık
+   ekranda duruyor: yoldaşın yazdığı anda görünüyor, cevap için doğrudan
+   alttaki kutuya tıklanıyor.
+
+   Zemin yarı saydam ama YAZI TAM OPAK — panelin tamamına opacity vermek
+   metni de soldurup okunmaz yapıyordu. Fareyle üstüne gelince ya da
+   kutuya odaklanınca zemin koyulaşıyor. */
 .game-chat {
-  position: absolute; z-index: 38; top: 58px; right: 14px;
-  width: min(360px, calc(100% - 28px)); max-height: min(430px, 58%);
+  position: absolute; z-index: 38; top: 58px; left: 14px;
+  width: min(330px, calc(100% - 28px));
   display: flex; flex-direction: column;
-  border: 1px solid rgba(212,168,83,0.42);
-  background: rgba(5,8,16,0.94);
-  box-shadow: 6px 6px 0 rgba(0,0,0,0.6), 0 18px 60px rgba(0,0,0,0.5);
+  border: 1px solid rgba(212,168,83,0.26);
+  background-color: rgba(5,8,16,0.52);
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.34);
   clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px);
   opacity: 0; transform: translateY(-8px) scale(0.98);
   pointer-events: none;
-  transition: opacity 160ms ease, transform 160ms ease;
+  /* `background` KISAYOLU DEĞİL `background-color`: kısayolla geçiş
+     güvenilir animasyonlanmıyordu, zemin odaklanınca koyulaşmıyordu. */
+  transition: opacity 160ms ease, transform 160ms ease,
+              background-color 180ms ease, border-color 180ms ease;
 }
 .game-chat.is-open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+.game-chat.is-open:hover,
+.game-chat.is-open:focus-within {
+  background-color: rgba(5,8,16,0.93);
+  border-color: rgba(212,168,83,0.46);
+}
+/* Başlık ve gönderme kutusu ince: sürekli açık bir katmanda bunlar
+   mesajlardan çok yer kaplıyordu (49px + 58px = paneli %44'e çıkarıyordu). */
 .game-chat header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(212,168,83,0.22);
-  color: var(--gold-lt); letter-spacing: 1.8px; font-size: 0.7rem;
+  padding: 4px 5px 4px 9px;
+  border-bottom: 1px solid rgba(212,168,83,0.18);
+  color: var(--gold-lt); letter-spacing: 1.6px; font-size: 0.56rem;
 }
 .game-chat header button {
-  width: 28px; height: 28px; border: 0; background: transparent;
-  color: var(--text-dim); font-size: 1.25rem; cursor: pointer;
+  width: 20px; height: 20px; border: 0; background: transparent;
+  color: var(--text-dim); font-size: 1rem; line-height: 1; cursor: pointer;
 }
+/* min-height yok: en fazla 6 mesaj tutuluyor (bkz. gameView appendChat),
+   panel içeriğe göre büzülsün. Sabit yükseklik, sohbet boşken ekranın
+   sol üstünde kocaman boş bir kutu bırakıyordu. */
 .game-chat-messages {
-  min-height: 90px; padding: 10px 11px;
-  display: flex; flex-direction: column; gap: 8px;
+  min-height: 0; max-height: min(200px, 28vh);
+  padding: 8px 9px;
+  display: flex; flex-direction: column; gap: 5px;
   overflow-y: auto; overscroll-behavior: contain;
 }
+.game-chat-messages:empty { padding: 0; }
+/* İsim ve metin AYNI SATIRDA — üst üste iki satır, 6 mesajda paneli
+   oyun alanının %67'sine çıkarıyordu. */
 .game-chat-message {
-  max-width: 88%; padding: 7px 9px;
+  max-width: 100%; padding: 4px 8px;
+  display: flex; gap: 6px; align-items: baseline;
   border: 1px solid rgba(255,255,255,0.09);
   background: rgba(255,255,255,0.045);
 }
 .game-chat-message.is-self {
-  align-self: flex-end;
   border-color: rgba(212,168,83,0.28);
   background: rgba(212,168,83,0.10);
 }
-.game-chat-message.is-peer { align-self: flex-start; }
-.game-chat-meta {
-  display: flex; justify-content: space-between; gap: 14px;
-  margin-bottom: 3px; color: var(--gold-lt);
+.game-chat-message > strong {
+  flex: none; color: var(--gold-lt);
   font-size: 0.6rem; letter-spacing: 0.5px;
 }
-.game-chat-meta time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .game-chat-message p {
-  margin: 0; color: var(--text); font-size: 0.78rem;
-  line-height: 1.38; overflow-wrap: anywhere; white-space: pre-wrap;
+  margin: 0; min-width: 0; color: var(--text); font-size: 0.74rem;
+  line-height: 1.34; overflow-wrap: anywhere; white-space: pre-wrap;
 }
 .game-chat-form {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px;
-  padding: 9px; border-top: 1px solid rgba(212,168,83,0.18);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px;
+  padding: 6px; border-top: 1px solid rgba(212,168,83,0.18);
 }
 .game-chat-form input {
-  min-width: 0; padding: 9px 10px;
+  min-width: 0; padding: 6px 9px;
   border: 1px solid rgba(255,255,255,0.14); border-radius: 0;
   outline: none; background: rgba(255,255,255,0.05);
-  color: var(--text); font: 0.78rem var(--f-body);
+  color: var(--text); font: 0.74rem var(--f-body);
 }
 .game-chat-form input:focus { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(212,168,83,0.12); }
 .game-chat-form button {
@@ -932,11 +955,14 @@ kbd {
   .hud { padding: 10px; }
   .life { width: 19px; height: 19px; }
   .hud-chip { padding: 4px 10px; font-size: 0.74rem; }
+  /* Dar ekranda tam genişlik oyun alanının yarısını kapatıyordu; sürekli
+     açık olduğu için burada daha dar ve daha saydam duruyor. */
   .game-chat {
-    top: 52px; right: 8px;
-    width: calc(100% - 16px); max-height: 52%;
+    top: 52px; left: 8px;
+    width: min(62%, 260px);
+    background-color: rgba(5,8,16,0.44);
   }
-  .game-chat-messages { min-height: 72px; }
+  .game-chat-messages { min-height: 0; }
   .game-chat-form input { font-size: 16px; } /* iOS odaklanınca otomatik yakınlaşmasın */
   .level-progress { bottom: 8px; }
   .proposal-actions { flex-direction: column; min-height: 200px; }

@@ -54,6 +54,11 @@ const TRACKS = {
   }
 };
 
+/* Müzik seviyesi. Dört ayrı yerde açılıyor (ilk kurulum, dosya müziği,
+   toggle, setEnabled) — dağınık sabit bırakılırsa biri güncellenmeden
+   kalıyor ve ses toggle'a basınca sıçrıyor. */
+const MUSIC_VOL = 0.35;
+
 class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -93,7 +98,7 @@ class AudioEngine {
     this.comp.release.value = 0.22;
 
     this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.7;
+    this.musicGain.gain.value = MUSIC_VOL;
     this.sfxGain = this.ctx.createGain();
     this.sfxGain.gain.value = 1.0;
 
@@ -237,7 +242,7 @@ class AudioEngine {
     this._musicStart = startSec;
 
     /* `stopTrack` kısma yapmış olabilir; müzik açıksa seviyeyi geri getir. */
-    if (this.enabled) this.musicGain.gain.setTargetAtTime(0.7, this.ctx.currentTime, 0.3);
+    if (this.enabled) this.musicGain.gain.setTargetAtTime(MUSIC_VOL, this.ctx.currentTime, 0.3);
     el.play().catch(() => { /* otomatik oynatma engeli — ilk tıklamada açılır */ });
   }
 
@@ -267,7 +272,7 @@ class AudioEngine {
     if (!this.ctx) return false;
     this.enabled = !this.enabled;
     if (this.enabled) {
-      this.musicGain.gain.setTargetAtTime(0.7, this.ctx.currentTime, 0.4);
+      this.musicGain.gain.setTargetAtTime(MUSIC_VOL, this.ctx.currentTime, 0.4);
       /* Dosya müziği çalıyorsa prosedürel parçayı ÜSTÜNE başlatma —
          ikisi aynı anda çalınca curcuna oluyordu. */
       if (this._musicEl) this._musicEl.play().catch(() => {});
@@ -285,7 +290,7 @@ class AudioEngine {
     if (!this.ctx) return;
     this.enabled = v;
     if (v) {
-      this.musicGain.gain.value = 0.7;
+      this.musicGain.gain.value = MUSIC_VOL;
       if (this._musicEl) this._musicEl.play().catch(() => {});
       else this._runTrack();
     } else {
