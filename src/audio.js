@@ -58,10 +58,14 @@ const TRACKS = {
    toggle, setEnabled) — dağınık sabit bırakılırsa biri güncellenmeden
    kalıyor ve ses toggle'a basınca sıçrıyor.
 
-   0.70 → 0.35 → 0.0875: orijinalin sekizde biri. Sadece MÜZİK yolu;
-   efektler `sfxGain` üzerinden gidiyor ve dokunulmadı, yani kılıç/kalp
-   sesleri eskisi gibi duyuluyor, müziğin altında kaybolmuyor. */
-const MUSIC_VOL = 0.0875;
+   Kulakla ayarlandı, kademe kademe indirildi: 0.70 → 0.35 → 0.0875 →
+   0.04375. Orijinalin ON ALTIDA BİRİ; müzik artık zemin dokusu, ön
+   planda değil.
+
+   Sadece MÜZİK yolu. Efektler `sfxGain` üzerinden gidiyor ve 1.0'da
+   duruyor — kılıç, kalp, kanat sesleri kısılmadı, aksine müzik
+   çekildiği için daha net duyuluyor. */
+const MUSIC_VOL = 0.04375;
 
 class AudioEngine {
   constructor() {
