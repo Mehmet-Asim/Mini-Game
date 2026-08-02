@@ -56,8 +56,12 @@ const TRACKS = {
 
 /* Müzik seviyesi. Dört ayrı yerde açılıyor (ilk kurulum, dosya müziği,
    toggle, setEnabled) — dağınık sabit bırakılırsa biri güncellenmeden
-   kalıyor ve ses toggle'a basınca sıçrıyor. */
-const MUSIC_VOL = 0.35;
+   kalıyor ve ses toggle'a basınca sıçrıyor.
+
+   0.70 → 0.35 → 0.0875: orijinalin sekizde biri. Sadece MÜZİK yolu;
+   efektler `sfxGain` üzerinden gidiyor ve dokunulmadı, yani kılıç/kalp
+   sesleri eskisi gibi duyuluyor, müziğin altında kaybolmuyor. */
+const MUSIC_VOL = 0.0875;
 
 class AudioEngine {
   constructor() {
