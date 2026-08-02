@@ -28,7 +28,7 @@ export const SCRIPT = {
     c2: 'Ama bazı efsanevi görevlerin asıl finali...\nKılıçla ya da zaferle bitmez.',
     c3: '{hero}, bu yol boyunca aslında tek bir sorunun cevabını arıyordu:\nCesaret bazen ejderhayla savaşmak değil, sadece o tek cümleyi söyleyebilmektir.',
     question: '{question}',
-    optYes: 'Bu yolda seninle yürüyorum.',
+    optYes: 'O haritada bana da yer aç.',
     optNo: 'Şimdilik kamp ateşinde soluklanıp bekleyelim.',
     hintYes: 'Elini tut',
     hintNo: 'Mevcut pozisyonu koru'
